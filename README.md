@@ -57,7 +57,7 @@ openssl pkcs12 -export \
   -out crocs_b2c_datacloud_key.p12 \
   -inkey datacloud_private_key.pem \
   -in datacloud_certificate.pem \
-  -passout pass:CrocsDataCloud2026
+  -passout pass:yourpass
 ```
 
 > **Never commit `*.pem`, `*.der`, or `*.p12` files to git.**
