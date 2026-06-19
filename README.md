@@ -7,7 +7,7 @@ This cartridge exports product catalog data from Salesforce B2C Commerce to Sale
 ## What It Does
 
 1. Queries **all online products** from the site catalog using `ProductMgr.queryAllSiteProducts()` — includes masters, variants, bundles, sets, and simple products; offline products are excluded
-2. Builds a CSV with 6 fields: `product_id`, `product_name`, `short_description`, `long_description`, `online_flag`, `product_type`
+2. Builds a CSV with 12 fields: `product_id`, `product_name`, `short_description`, `long_description`, `online_flag`, `product_type`, `online_from`, `online_to`, `last_modified`, `creation_date`, `brand`, `manufacturer_name`
 3. Uploads in batches of 500 rows to stay within B2C Commerce's 1MB JS string quota
 4. Authenticates with Salesforce using JWT Bearer flow (server-to-server, no user login required)
 5. Exchanges the Salesforce Core token for a Data Cloud tenant token via `/services/a360/token`
