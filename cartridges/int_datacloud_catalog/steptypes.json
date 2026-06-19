@@ -1,0 +1,71 @@
+{
+    "step-types": {
+        "script-module-step": [
+            {
+                "@type-id": "custom.ExportProductsToDataCloud",
+                "@supports-site-context": "true",
+                "@supports-organization-context": "false",
+                "module": "int_datacloud_catalog/cartridge/scripts/jobs/exportProductsToDataCloud",
+                "function": "execute",
+                "parameters": {
+                    "parameters": [
+                        {
+                            "@name": "InstanceURL",
+                            "@type": "string",
+                            "@required": true,
+                            "@trim": true,
+                            "description": "Salesforce login URL e.g. https://test.salesforce.com"
+                        },
+                        {
+                            "@name": "ConsumerKey",
+                            "@type": "string",
+                            "@required": true,
+                            "@trim": true,
+                            "description": "External Client App consumer key"
+                        },
+                        {
+                            "@name": "SFUsername",
+                            "@type": "string",
+                            "@required": true,
+                            "@trim": true,
+                            "description": "Salesforce username pre-authorized on the External Client App"
+                        },
+                        {
+                            "@name": "ConnectorName",
+                            "@type": "string",
+                            "@required": true,
+                            "@trim": true,
+                            "description": "Data Cloud Ingestion API connector name e.g. CrocsCustomB2CConnector"
+                        },
+                        {
+                            "@name": "ObjectName",
+                            "@type": "string",
+                            "@required": true,
+                            "@trim": true,
+                            "description": "Data Cloud schema object name e.g. Product"
+                        },
+                        {
+                            "@name": "DataCloudInstanceURL",
+                            "@type": "string",
+                            "@required": true,
+                            "@trim": true,
+                            "description": "Data Cloud tenant URL e.g. https://xxxx.c360a.salesforce.com"
+                        }
+                    ]
+                },
+                "status-codes": {
+                    "status": [
+                        {
+                            "@code": "ERROR",
+                            "description": "Used when an error occurred during product export or ingestion"
+                        },
+                        {
+                            "@code": "OK",
+                            "description": "Used when product export and ingestion completed successfully"
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}

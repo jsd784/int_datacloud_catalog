@@ -1,0 +1,12 @@
+{
+    "name": "crocs-b2c",
+    "version": "1.0.0",
+    "description": "Crocs B2C Commerce cartridges",
+    "scripts": {
+        "upload": "dwupload --cartridge int_datacloud_catalog"
+    },
+    "devDependencies": {
+        "dwupload": "^3.0.0",
+        "sgmf-scripts": "^2.0.0"
+    }
+}

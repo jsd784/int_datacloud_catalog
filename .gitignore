@@ -1,0 +1,8 @@
+dw.json
+node_modules/
+
+# Private keys and certificates — never commit
+*.pem
+*.der
+*.p12
+**/dc-auth-keys/
