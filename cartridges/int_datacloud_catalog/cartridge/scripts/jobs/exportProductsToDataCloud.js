@@ -1,6 +1,6 @@
 'use strict';
 
-var ProductSearchModel = require('dw/catalog/ProductSearchModel');
+var ProductMgr         = require('dw/catalog/ProductMgr');
 var Logger             = require('dw/system/Logger');
 var Site               = require('dw/system/Site');
 var Status             = require('dw/system/Status');
@@ -26,33 +26,21 @@ function csvEscape(value) {
 var BATCH_ROW_LIMIT = 500; // upload every N rows to stay under 1MB B2C string quota
 
 /**
- * Returns true for products to include: Master (Variation Base) and simple Products.
- * Excludes Variants, Bundles, and Sets.
- */
-function isIncluded(product) {
-    return product.isMaster() || (!product.isVariant() && !product.isBundle() && !product.isProductSet());
-}
-
-/**
  * Iterates all online products and calls uploadFn for each batch.
  * Never accumulates the full catalog in a single string.
  * @param {Function} uploadFn - called with (csvBatch) for each batch
  * @returns {number} total products exported
  */
 function uploadProductsInBatches(uploadFn) {
-    var psm = new ProductSearchModel();
-    psm.setCategoryID('root');
-    psm.setRecursiveCategorySearch(true);
-    psm.search();
+    var allProducts = ProductMgr.queryAllSiteProducts();
+    var batchRows   = [CSV_HEADER];
+    var total       = 0;
+    var skipped     = 0;
 
-    var hits      = psm.getProductSearchHits();
-    var batchRows = [CSV_HEADER];
-    var total     = 0;
+    while (allProducts.hasNext()) {
+        var product = allProducts.next();
 
-    while (hits.hasNext()) {
-        var product = hits.next().getProduct();
-
-        if (!isIncluded(product)) continue;
+        if (!product.isOnline()) { skipped++; continue; }
 
         var shortDesc = product.getShortDescription() ? product.getShortDescription().toString() : '';
         var longDesc  = product.getLongDescription()  ? product.getLongDescription().toString()  : '';
@@ -63,7 +51,7 @@ function uploadProductsInBatches(uploadFn) {
             csvEscape(shortDesc),
             csvEscape(longDesc),
             csvEscape(product.isOnline()),
-            csvEscape(product.isMaster() ? 'Variation Base Product' : 'Product')
+            csvEscape(product.isMaster() ? 'Variation Base Product' : product.isVariant() ? 'Variation Product' : product.isBundle() ? 'Bundle' : product.isProductSet() ? 'Set' : 'Product')
         ].join(','));
 
         total++;
@@ -78,6 +66,8 @@ function uploadProductsInBatches(uploadFn) {
         uploadFn(batchRows.join('\n'));
     }
 
+    allProducts.close();
+    log.info('Included: {0}, Skipped (offline or non-matching type): {1}', total, skipped);
     return total;
 }
 

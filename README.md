@@ -160,6 +160,7 @@ Edit `dw.json`:
 
 ```bash
 # Upload cartridge to sandbox
+cd /path/to/orgs/crocs/b2c
 npx dwupload --cartridge cartridges/int_datacloud_catalog
 ```
 
@@ -168,6 +169,14 @@ Expected output:
 [HH:MM:SS] Successfully uploaded cartridge: cartridges/int_datacloud_catalog
 [HH:MM:SS] Done!
 ```
+
+To redeploy after any code change:
+```bash
+cd /path/to/orgs/crocs/b2c
+npx dwupload --cartridge cartridges/int_datacloud_catalog
+```
+
+> After deploying, you do **not** need to restart anything in Business Manager — the new code is picked up on the next job run.
 
 ---
 
