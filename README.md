@@ -125,7 +125,7 @@ openssl pkcs12 -export \
 1. Business Manager → **Administration → Operations → Private Keys and Certificates**
 2. Click **Import**
 3. Upload `crocs_b2c_datacloud_key.p12`
-4. Password: `CrocsDataCloud2026`
+4. Password: `yourpassword`
 5. Alias: `crocs_b2c_datacloud_key`
 6. Save
 
