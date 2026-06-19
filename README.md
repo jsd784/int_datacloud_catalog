@@ -53,14 +53,14 @@ openssl req -new -x509 -key datacloud_private_key.pem \
   -out datacloud_certificate.pem -days 365 \
   -subj "/C=US/ST=CA/L=San Francisco/O=YourOrg/OU=Engineering/CN=b2c-datacloud"
 
-# Create PKCS12 bundle for Business Manager import
+# Create PKCS12 bundle for Business Manager import, by updating passout pass. 
 openssl pkcs12 -export \
   -out b2c_datacloud_key.p12 \
   -inkey datacloud_private_key.pem \
   -in datacloud_certificate.pem \
   -passout pass:your-chosen-password
 ```
-
+> Note your-chosen-password it will be needed in **Step 1 of B2C Commerce Setup**
 > **Never commit `*.pem`, `*.der`, or `*.p12` files to git.**
 
 ---
@@ -71,7 +71,8 @@ openssl pkcs12 -export \
 2. Fill in:
    - App Name: any descriptive name (e.g. `B2C DataCloud Ingestion`)
    - Contact Email: your email
-3. Click **Edit** on the app → **OAuth Settings**:
+3. Scroll Down and Expand **API(Enable OAuth Settings)**:
+   - Enable **Enable OAuth**: ✅
    - Callback URL: `https://login.salesforce.com/callback`
    - Selected OAuth Scopes:
      - `Manage Data Cloud Ingestion API data (cdp_ingest_api)`
@@ -79,7 +80,8 @@ openssl pkcs12 -export \
      - `Perform requests at any time (refresh_token, offline_access)`
    - Enable **JWT Bearer Flow**: ✅
    - Upload certificate: `datacloud_certificate.pem` (the `.pem` file, not the `.p12`)
-4. Save. Copy the **Consumer Key** — it goes in BM job parameters only (never in code).
+4. Save. 
+5. Goto **Settings** -> **OAuth Settings** Copy the **Consumer Key** — it goes in BM job parameters only (never in code).
 
 ---
 
@@ -87,12 +89,17 @@ openssl pkcs12 -export \
 
 The JWT `sub` claim must match a Salesforce user who is explicitly pre-authorized on the app.
 
-1. External Client App Manager → your app → **Manage**
-2. Click **Edit Policies**:
+1. External Client App Manager → your app → Click **Edit Policies**:
+2. App Policies
+   - Start Page - OAuth.
    - Permitted Users: `Admin approved users are pre-authorized`
+   - Select Profiles: add the profile of the user you'll use (e.g. `System Administrator`)
+   - Select Permission Sets: `Customer 360 Data Platform Integration`
+3. OAuth Policies:
+   - Permitted Users: `Admin approved users are pre-authorized`
+   - OAuth Start URL: `https://login.salesforce.com`
    - IP Relaxation: `Relax IP restrictions`
-   - Save
-3. Back on the Manage page → **Select Profiles** → add the profile of the user you'll use (e.g. `System Administrator`)
+   - Refresh Token Policy: `Refresh token is valid until revoked`
 4. Save
 
 > **Important:** The username in the job parameter (`SFUsername`) must exactly match the **Username** field in Setup → Users — not the email address. In sandboxes these often differ.
@@ -128,7 +135,7 @@ The JWT `sub` claim must match a Salesforce user who is explicitly pre-authorize
 1. BM → **Administration → Operations → Private Keys and Certificates**
 2. Click **Import**
 3. Upload your `.p12` file
-4. Enter the password you set during PKCS12 creation
+4. Enter the password you set during PKCS12 creation from **Step 1 of Salesforce Core Setup**
 5. Set an **Alias** — this is the value you'll use for the `PrivateKeyAlias` job parameter (e.g. `b2c_datacloud_key`)
 6. Save
 
@@ -136,11 +143,11 @@ The JWT `sub` claim must match a Salesforce user who is explicitly pre-authorize
 
 ### Step 2: Deploy the Cartridge
 
-**Prerequisites:** Node.js installed, B2C access key with WebDAV File Access and UX Studio role.
+**Prerequisites:** Node.js installed, B2C access key with WebDAV File Access and UX Studio role. Ensure this repo is clone locally.
 
 ```bash
 # Navigate to the b2c directory
-cd /path/to/b2c
+cd /path/to/home/of/repo
 
 # Install dependencies
 npm install
@@ -152,7 +159,7 @@ cp dw.json.example dw.json
 Edit `dw.json`:
 ```json
 {
-    "hostname": "your-sandbox.dx.commercecloud.salesforce.com",
+    "hostname": "your-instance.dx.commercecloud.salesforce.com",
     "username": "your.username@example.com",
     "password": "YOUR-ACCESS-KEY-HERE",
     "code-version": "your-code-version"
@@ -162,7 +169,7 @@ Edit `dw.json`:
 > Get the access key from: BM → Administration → Organization → WebDAV Client Permissions → generate a new key.
 
 ```bash
-# Upload cartridge to sandbox
+# Upload cartridge to your instance
 npx dwupload --cartridge cartridges/int_datacloud_catalog
 ```
 
@@ -170,22 +177,22 @@ npx dwupload --cartridge cartridges/int_datacloud_catalog
 
 ### Step 3: Register Cartridge in Business Manager
 
-1. BM → **Administration → Sites → Manage Sites → Business Manager → Settings**
-2. Add `int_datacloud_catalog` to the **start** of the Cartridges field
-3. Save
+1. BM → **Administration → Sites → Manage Sites → Business Manager Site → Manage the Business Manager site.**
+2. Add `int_datacloud_catalog:` to the **start** of the Cartridges field
+3. Apply
 
 ---
 
 ### Step 4: Configure the Job
 
-1. BM → **Administration → Operations → Job Schedules → New Job**
+1. BM → **Administration → Operations → Jobs → New Job**
 2. Job ID: `ExportProductsToDataCloud` (or any name)
-3. **Add Step** → search for `custom.ExportProductsToDataCloud`
+3. **Job Steps** →**Configure a Step** → search for `custom.ExportProductsToDataCloud`
 4. Set all parameters:
 
 | Parameter | Example Value | Notes |
 |---|---|---|
-| `InstanceURL` | `https://yourorg.sandbox.my.salesforce.com` | Salesforce Core My Domain URL |
+| `InstanceURL` | `https://yourorg.sandbox.my.salesforce.com` | Salesforce Core My Domain URL — find it in SF Setup → My Domain. Do **not** use the Lightning UI URL (`lightning.force.com`) |
 | `ConsumerKey` | *(from External Client App)* | Do not hardcode in scripts |
 | `SFUsername` | `youruser@yourorg.sandbox` | Exact username from SF Setup → Users |
 | `ConnectorName` | `MyB2CConnector` | Case-sensitive, must match DC Setup |
@@ -260,8 +267,10 @@ B2C Job
 ## Troubleshooting
 
 **Step type not appearing in Business Manager**
-- Verify `int_datacloud_catalog` is on the Business Manager site cartridge path (not just the storefront site)
+- Verify `int_datacloud_catalog` is on the Business Manager site cartridge path (not just a storefront site): BM → Administration → Sites → Manage Sites → Business Manager → Settings → Cartridges
 - Log out and back into BM after uploading
+- Validate `steptypes.json` was parsed correctly: BM → Administration → Operations → Job Step Types — `int_datacloud_catalog` should show as `valid`
+- If valid but still not appearing, force a full step type rescan by toggling the active code version: BM → Administration → Site Development → Code Versions → activate any other version → immediately activate `moderate` again. This forces the application server to reload all step type registrations.
 
 **`invalid_grant` / `invalid assertion`**
 - Certificate mismatch — verify that the `.pem` uploaded to the External Client App matches the private key in the `.p12` imported into BM (they must be a keypair)

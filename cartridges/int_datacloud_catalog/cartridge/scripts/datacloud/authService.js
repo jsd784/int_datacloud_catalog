@@ -85,7 +85,12 @@ function signJWT(consumerKey, username, audience, privateKeyAlias) {
  * @returns {{ accessToken: string }}
  */
 function getAccessToken(loginURL, consumerKey, username, privateKeyAlias) {
-    var jwt = signJWT(consumerKey, username, 'https://test.salesforce.com', privateKeyAlias);
+    // Derive JWT audience from loginURL: sandbox orgs use test.salesforce.com, production uses login.salesforce.com
+    var audience = (loginURL.indexOf('.sandbox.') !== -1 || loginURL.indexOf('--') !== -1)
+        ? 'https://test.salesforce.com'
+        : 'https://login.salesforce.com';
+
+    var jwt = signJWT(consumerKey, username, audience, privateKeyAlias);
 
     var client = new HTTPClient();
     client.setTimeout(10000);

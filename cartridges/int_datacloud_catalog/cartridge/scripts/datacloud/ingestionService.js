@@ -92,7 +92,7 @@ function closeJob(instanceURL, accessToken, jobId) {
  */
 function waitForJobCompletion(instanceURL, accessToken, jobId) {
     var client;
-    var MAX_ATTEMPTS = 60;
+    var MAX_ATTEMPTS = 120; // 120 × 5s = 10 minutes max
     var terminalStates = ['JobComplete', 'Failed', 'Aborted'];
 
     for (var i = 0; i < MAX_ATTEMPTS; i++) {

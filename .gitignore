@@ -1,5 +1,6 @@
 dw.json
 node_modules/
+.DS_Store
 
 # Private keys and certificates — never commit
 *.pem
