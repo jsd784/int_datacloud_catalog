@@ -19,7 +19,6 @@ function createJob(instanceURL, accessToken, connectorName, objectName) {
     client.setTimeout(15000);
 
     var url = instanceURL + BASE_PATH + '/jobs';
-    log.info('createJob URL: {0}', url);
     client.open('POST', url);
     client.setRequestHeader('Authorization', 'Bearer ' + accessToken);
     client.setRequestHeader('Content-Type', 'application/json');
@@ -30,12 +29,9 @@ function createJob(instanceURL, accessToken, connectorName, objectName) {
         operation: 'upsert'
     });
 
-    log.info('createJob token (first 20): {0}', accessToken.substring(0, 20));
-    log.info('createJob payload: {0}', payload);
     client.send(payload);
 
     var responseBody = client.text || client.errorText || '(empty)';
-    log.info('createJob response [{0}]: {1}', client.statusCode, responseBody);
     if (client.statusCode !== 201) {
         throw new Error('createJob failed [' + client.statusCode + ']: ' + responseBody);
     }
@@ -113,17 +109,13 @@ function waitForJobCompletion(instanceURL, accessToken, jobId) {
         var response = JSON.parse(client.text);
         var state = response.state;
 
-        // Added a logger so you can actively watch the state change in your log file
         log.info('Polling Data Cloud — Attempt {0}/{1} — Status: {2}', (i + 1), MAX_ATTEMPTS, state);
 
-        // If the job reaches a finalized state, break out and return it
         if (terminalStates.indexOf(state) !== -1) {
             return state;
         }
 
-        // pause job thread execution for 5 seconds before burning the next attempt loop.
         if (i < MAX_ATTEMPTS - 1) {
-            // dw.Thread.sleep(5000);
             localSleep(5000);
         }
     }
@@ -131,11 +123,10 @@ function waitForJobCompletion(instanceURL, accessToken, jobId) {
     return 'Unknown';
 }
 
+// dw.Thread.sleep() is unavailable in B2C Commerce's Rhino engine — busy-wait instead
 function localSleep(milliseconds) {
     var startTime = new Date().getTime();
-    while (new Date().getTime() < startTime + milliseconds) {
-        // Safe, pure JS inline pause loop
-    }
+    while (new Date().getTime() < startTime + milliseconds) { /* spin */ }
 }
 
 module.exports = {

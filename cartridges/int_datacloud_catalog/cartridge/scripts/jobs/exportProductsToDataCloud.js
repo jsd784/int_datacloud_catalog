@@ -10,7 +10,7 @@ var ingestionService = require('int_datacloud_catalog/cartridge/scripts/dataclou
 
 var log = Logger.getLogger('int_datacloud_catalog', 'exportProductsToDataCloud');
 
-var CSV_HEADER = 'product_id,product_name,short_description,long_description,online_flag,product_type';
+var CSV_HEADER = 'product_id,product_name,short_description,long_description,online_flag,product_type,online_from,online_to,last_modified,creation_date,brand,manufacturer_name';
 
 /**
  * Escapes a value for CSV: wraps in double quotes and escapes internal quotes.
@@ -21,6 +21,16 @@ function csvEscape(value) {
     if (value === null || value === undefined) return '""';
     var str = String(value).replace(/"/g, '""');
     return '"' + str + '"';
+}
+
+/**
+ * Formats a B2C Date as ISO 8601 string, or empty string if null.
+ * @param {Date} d
+ * @returns {string}
+ */
+function formatDate(d) {
+    if (!d) return '';
+    try { return new Date(d.getTime()).toISOString(); } catch (e) { return ''; }
 }
 
 var BATCH_ROW_LIMIT = 500; // upload every N rows to stay under 1MB B2C string quota
@@ -51,7 +61,13 @@ function uploadProductsInBatches(uploadFn) {
             csvEscape(shortDesc),
             csvEscape(longDesc),
             csvEscape(product.isOnline()),
-            csvEscape(product.isMaster() ? 'Variation Base Product' : product.isVariant() ? 'Variation Product' : product.isBundle() ? 'Bundle' : product.isProductSet() ? 'Set' : 'Product')
+            csvEscape(product.isMaster() ? 'Variation Base Product' : product.isVariant() ? 'Variation Product' : product.isBundle() ? 'Bundle' : product.isProductSet() ? 'Set' : 'Product'),
+            csvEscape(formatDate(product.getOnlineFrom())),
+            csvEscape(formatDate(product.getOnlineTo())),
+            csvEscape(formatDate(product.getLastModified())),
+            csvEscape(formatDate(product.getCreationDate())),
+            csvEscape(product.getBrand()),
+            csvEscape(product.getManufacturerName())
         ].join(','));
 
         total++;
@@ -73,28 +89,19 @@ function uploadProductsInBatches(uploadFn) {
 
 /**
  * Job step entry point — called by B2C Commerce job framework.
- *
- * Job parameters (configure in Business Manager → Job Scheduler):
- *   InstanceURL   : https://test.salesforce.com
- *   ConsumerKey   : External Client App consumer key
- *   SFUsername    : jasvirdhillon@salesforce.com
- *   ConnectorName : CrocsCustomB2CConnector
- *   ObjectName    : Product
- *
- * Site scope must be set to CrocsUS so ProductSearchModel queries the correct catalog.
- *
- * Private key file must be uploaded to IMPEX/src/datacloud/datacloud_private_key.der
+ * Configure all parameters in Business Manager → Job Schedules.
  *
  * @param {dw.util.HashMap} parameters - Job step parameters from Business Manager
  * @returns {dw.system.Status}
  */
 function execute(parameters) {
-    var loginURL            = parameters.InstanceURL;
-    var consumerKey         = parameters.ConsumerKey;
-    var sfUsername          = parameters.SFUsername;
-    var connectorName       = parameters.ConnectorName;
-    var objectName          = parameters.ObjectName;
+    var loginURL             = parameters.InstanceURL;
+    var consumerKey          = parameters.ConsumerKey;
+    var sfUsername           = parameters.SFUsername;
+    var connectorName        = parameters.ConnectorName;
+    var objectName           = parameters.ObjectName;
     var dataCloudInstanceURL = parameters.DataCloudInstanceURL;
+    var privateKeyAlias      = parameters.PrivateKeyAlias;
 
     var siteID = Site.getCurrent().getID();
     log.info('Starting product export for site: {0}', siteID);
@@ -102,7 +109,7 @@ function execute(parameters) {
     // Step 1: Get access token via JWT Bearer flow
     var auth;
     try {
-        auth = authService.getAccessToken(loginURL, consumerKey, sfUsername);
+        auth = authService.getAccessToken(loginURL, consumerKey, sfUsername, privateKeyAlias);
         log.info('Authentication successful');
     } catch (e) {
         log.error('Authentication failed: {0}', e.message);

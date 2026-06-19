@@ -35,7 +35,7 @@
                             "@type": "string",
                             "@required": true,
                             "@trim": true,
-                            "description": "Data Cloud Ingestion API connector name e.g. CrocsCustomB2CConnector"
+                            "description": "Data Cloud Ingestion API connector name e.g. MyB2CConnector"
                         },
                         {
                             "@name": "ObjectName",
@@ -50,6 +50,13 @@
                             "@required": true,
                             "@trim": true,
                             "description": "Data Cloud tenant URL e.g. https://xxxx.c360a.salesforce.com"
+                        },
+                        {
+                            "@name": "PrivateKeyAlias",
+                            "@type": "string",
+                            "@required": true,
+                            "@trim": true,
+                            "description": "Alias of the PKCS12 private key imported in BM → Administration → Operations → Private Keys and Certificates"
                         }
                     ]
                 },

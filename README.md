@@ -1,4 +1,4 @@
-# Crocs B2C Commerce — Data Cloud Integration
+# B2C Commerce — Data Cloud Catalog Integration
 
 This cartridge exports product catalog data from Salesforce B2C Commerce to Salesforce Data Cloud using the Ingestion API (Bulk mode) and JWT Bearer authentication.
 
@@ -6,11 +6,12 @@ This cartridge exports product catalog data from Salesforce B2C Commerce to Sale
 
 ## What It Does
 
-1. Queries all online Master (Variation Base) Products from the CrocsUS site catalog
-2. Builds a CSV with 6 fields: Product ID, Name, Short Description, Long Description, Online Flag, Product Type
-3. Authenticates with Salesforce using JWT Bearer flow (server-to-server, no user login)
-4. Exchanges the Salesforce Core token for a Data Cloud tenant token via `/services/a360/token`
-5. Pushes the CSV to Data Cloud via the Bulk Ingestion API
+1. Queries **all online products** from the site catalog using `ProductMgr.queryAllSiteProducts()` — includes masters, variants, bundles, sets, and simple products; offline products are excluded
+2. Builds a CSV with 6 fields: `product_id`, `product_name`, `short_description`, `long_description`, `online_flag`, `product_type`
+3. Uploads in batches of 500 rows to stay within B2C Commerce's 1MB JS string quota
+4. Authenticates with Salesforce using JWT Bearer flow (server-to-server, no user login required)
+5. Exchanges the Salesforce Core token for a Data Cloud tenant token via `/services/a360/token`
+6. Pushes each CSV batch to Data Cloud via the Bulk Ingestion API, then polls until `JobComplete`
 
 ---
 
@@ -23,7 +24,7 @@ b2c/
 │       ├── cartridge/
 │       │   └── scripts/
 │       │       ├── datacloud/
-│       │       │   ├── authService.js       # JWT signing + token exchange
+│       │       │   ├── authService.js       # JWT signing + two-step token exchange
 │       │       │   └── ingestionService.js  # Data Cloud Bulk Ingestion API calls
 │       │       └── jobs/
 │       │           └── exportProductsToDataCloud.js  # Job entry point
@@ -37,11 +38,11 @@ b2c/
 
 ---
 
-## Part 1: Salesforce Setup (fsmpartial sandbox)
+## Part 1: Salesforce Core Setup
 
 ### Step 1: Generate RSA Key Pair
 
-Run these commands locally. Keys are stored at `orgs/crocs/dc-auth-keys/`.
+Run these commands locally. Store the generated files outside the repo (they must never be committed).
 
 ```bash
 # Generate private key
@@ -50,58 +51,60 @@ openssl genrsa -out datacloud_private_key.pem 2048
 # Generate self-signed certificate (valid 365 days)
 openssl req -new -x509 -key datacloud_private_key.pem \
   -out datacloud_certificate.pem -days 365 \
-  -subj "/C=US/ST=CA/L=San Francisco/O=Salesforce/OU=FDE org/CN=Crocs partial sandbox/emailAddress=jasvir.dhillon@salesforce.com"
+  -subj "/C=US/ST=CA/L=San Francisco/O=YourOrg/OU=Engineering/CN=b2c-datacloud"
 
 # Create PKCS12 bundle for Business Manager import
 openssl pkcs12 -export \
-  -out crocs_b2c_datacloud_key.p12 \
+  -out b2c_datacloud_key.p12 \
   -inkey datacloud_private_key.pem \
   -in datacloud_certificate.pem \
-  -passout pass:yourpass
+  -passout pass:your-chosen-password
 ```
 
 > **Never commit `*.pem`, `*.der`, or `*.p12` files to git.**
 
 ---
 
-### Step 2: Create External Client App in fsmpartial
+### Step 2: Create an External Client App
 
-1. Setup → **External Client App Manager** → **New External Client App**
+1. In Salesforce Core: Setup → **External Client App Manager** → **New External Client App**
 2. Fill in:
-   - App Name: `Crocs B2C DataCloud Ingestion`
-   - Contact Email: `jasvir.dhillon@salesforce.com`
-3. Click **Edit** on the app → OAuth Settings:
+   - App Name: any descriptive name (e.g. `B2C DataCloud Ingestion`)
+   - Contact Email: your email
+3. Click **Edit** on the app → **OAuth Settings**:
    - Callback URL: `https://login.salesforce.com/callback`
    - Selected OAuth Scopes:
      - `Manage Data Cloud Ingestion API data (cdp_ingest_api)`
      - `Manage user data via APIs (api)`
      - `Perform requests at any time (refresh_token, offline_access)`
    - Enable **JWT Bearer Flow**: ✅
-   - Upload certificate: `datacloud_certificate.pem`
-4. Save. Copy the **Consumer Key** shown — store it securely (goes in BM job parameters only).
+   - Upload certificate: `datacloud_certificate.pem` (the `.pem` file, not the `.p12`)
+4. Save. Copy the **Consumer Key** — it goes in BM job parameters only (never in code).
 
 ---
 
-### Step 3: Pre-authorize the User
+### Step 3: Pre-authorize a User for JWT Bearer
 
-1. External Client App Manager → `Crocs B2C DataCloud Ingestion` → **Manage**
+The JWT `sub` claim must match a Salesforce user who is explicitly pre-authorized on the app.
+
+1. External Client App Manager → your app → **Manage**
 2. Click **Edit Policies**:
    - Permitted Users: `Admin approved users are pre-authorized`
    - IP Relaxation: `Relax IP restrictions`
    - Save
-3. Back on Manage page → **Select Profiles** → add `System Administrator`
+3. Back on the Manage page → **Select Profiles** → add the profile of the user you'll use (e.g. `System Administrator`)
 4. Save
 
-> **Important:** The Salesforce username used in the job (`SFUsername`) must match the exact username in Setup → Users — no dots vs dots matters. Use the value shown in the Username field, not the email.
+> **Important:** The username in the job parameter (`SFUsername`) must exactly match the **Username** field in Setup → Users — not the email address. In sandboxes these often differ.
 
 ---
 
-### Step 4: Create Data Cloud Ingestion API Connector
+### Step 4: Create a Data Cloud Ingestion API Connector
 
 1. Data Cloud Setup → **Ingestion API** → **New**
-2. Connector Name: `CrocsCustomB2CConnector`
-3. Upload schema file: `orgs/crocs/datacloud/product-ingestion-schema.yaml`
-4. Create Data Stream:
+2. Choose a connector name (you'll use this exact value in the `ConnectorName` job parameter)
+3. Upload your schema file defining the `Product` object with the 6 fields (see schema below)
+4. Create a Data Stream:
    - Object: `Product`
    - Primary Key: `product_id`
    - Category: `Other`
@@ -112,9 +115,9 @@ openssl pkcs12 -export \
 
 ### Step 5: Find Your Data Cloud Tenant URL
 
-1. Data Cloud Setup → **Data Cloud Settings** (or check the URL when in Data Cloud Setup)
+1. Data Cloud Setup → **Data Cloud Settings**
 2. The tenant URL looks like: `https://xxxx.c360a.salesforce.com`
-3. Alternatively, after JWT auth, the `instance_url` from the token response points to the Core org — the tenant URL must be obtained separately from DC Setup.
+3. Use this as the `DataCloudInstanceURL` job parameter — this is **different** from the Salesforce Core My Domain URL
 
 ---
 
@@ -122,22 +125,22 @@ openssl pkcs12 -export \
 
 ### Step 1: Import Private Key into Business Manager
 
-1. Business Manager → **Administration → Operations → Private Keys and Certificates**
+1. BM → **Administration → Operations → Private Keys and Certificates**
 2. Click **Import**
-3. Upload `crocs_b2c_datacloud_key.p12`
-4. Password: `yourpassword`
-5. Alias: `crocs_b2c_datacloud_key`
+3. Upload your `.p12` file
+4. Enter the password you set during PKCS12 creation
+5. Set an **Alias** — this is the value you'll use for the `PrivateKeyAlias` job parameter (e.g. `b2c_datacloud_key`)
 6. Save
 
 ---
 
 ### Step 2: Deploy the Cartridge
 
-**Prerequisites:** Node.js installed, access key with WebDAV File Access and UX Studio role.
+**Prerequisites:** Node.js installed, B2C access key with WebDAV File Access and UX Studio role.
 
 ```bash
-# Clone/navigate to the repo
-cd /path/to/orgs/crocs/b2c
+# Navigate to the b2c directory
+cd /path/to/b2c
 
 # Install dependencies
 npm install
@@ -149,10 +152,10 @@ cp dw.json.example dw.json
 Edit `dw.json`:
 ```json
 {
-    "hostname": "aadb-009.dx.commercecloud.salesforce.com",
-    "username": "jasvir.dhillon@salesforce.com",
+    "hostname": "your-sandbox.dx.commercecloud.salesforce.com",
+    "username": "your.username@example.com",
     "password": "YOUR-ACCESS-KEY-HERE",
-    "code-version": "NeerajVersion"
+    "code-version": "your-code-version"
 }
 ```
 
@@ -160,23 +163,8 @@ Edit `dw.json`:
 
 ```bash
 # Upload cartridge to sandbox
-cd /path/to/orgs/crocs/b2c
 npx dwupload --cartridge cartridges/int_datacloud_catalog
 ```
-
-Expected output:
-```
-[HH:MM:SS] Successfully uploaded cartridge: cartridges/int_datacloud_catalog
-[HH:MM:SS] Done!
-```
-
-To redeploy after any code change:
-```bash
-cd /path/to/orgs/crocs/b2c
-npx dwupload --cartridge cartridges/int_datacloud_catalog
-```
-
-> After deploying, you do **not** need to restart anything in Business Manager — the new code is picked up on the next job run.
 
 ---
 
@@ -191,20 +179,21 @@ npx dwupload --cartridge cartridges/int_datacloud_catalog
 ### Step 4: Configure the Job
 
 1. BM → **Administration → Operations → Job Schedules → New Job**
-2. Job ID: `ExportProductsToDataCloud`
+2. Job ID: `ExportProductsToDataCloud` (or any name)
 3. **Add Step** → search for `custom.ExportProductsToDataCloud`
 4. Set all parameters:
 
-| Parameter | Value | Notes |
+| Parameter | Example Value | Notes |
 |---|---|---|
-| `InstanceURL` | `https://crocsneworg--fsmpartial.sandbox.my.salesforce.com` | Salesforce Core My Domain URL |
+| `InstanceURL` | `https://yourorg.sandbox.my.salesforce.com` | Salesforce Core My Domain URL |
 | `ConsumerKey` | *(from External Client App)* | Do not hardcode in scripts |
-| `SFUsername` | `jasvirdhillon@salesforce.com` | Exact username from SF Setup → Users |
-| `ConnectorName` | `CrocsCustomB2CConnector` | Case-sensitive, must match DC Setup |
-| `ObjectName` | `Product` | Case-sensitive, must match DC data stream |
-| `DataCloudInstanceURL` | `https://xxxx.c360a.salesforce.com` | Data Cloud tenant URL from DC Setup |
+| `SFUsername` | `youruser@yourorg.sandbox` | Exact username from SF Setup → Users |
+| `ConnectorName` | `MyB2CConnector` | Case-sensitive, must match DC Setup |
+| `ObjectName` | `Product` | Case-sensitive, must match DC data stream object |
+| `DataCloudInstanceURL` | `https://xxxx.c360a.salesforce.com` | Data Cloud tenant URL from DC Settings |
+| `PrivateKeyAlias` | `b2c_datacloud_key` | Alias set during PKCS12 import in BM |
 
-5. Scope: **Sites → crocs_us**
+5. Scope: **Sites → your site** (required for `ProductMgr` to query the correct catalog)
 6. Save → **Run Now**
 
 ---
@@ -212,8 +201,8 @@ npx dwupload --cartridge cartridges/int_datacloud_catalog
 ### Step 5: Verify in Data Cloud
 
 After a successful run:
-1. Data Cloud → **Data Explorer** → select `Product` DMO
-2. Rows should appear within a few minutes of `JobComplete`
+1. Data Cloud → **Data Explorer** → select your `Product` DMO
+2. Rows appear within a few minutes of `JobComplete`
 
 ---
 
@@ -223,18 +212,18 @@ After a successful run:
 B2C Job
   │
   ├─ Step 1: JWT Bearer POST to InstanceURL/services/oauth2/token
-  │          JWT signed with RS256 using crocs_b2c_datacloud_key (PKCS12 in BM)
+  │          JWT signed RS256 using private key alias (PKCS12 stored in BM)
   │          → Returns: Salesforce Core access_token + instance_url
   │
   ├─ Step 2: Token exchange POST to instance_url/services/a360/token
   │          grant_type=urn:salesforce:grant-type:external:cdp
   │          → Returns: Data Cloud access_token
   │
-  └─ Step 3: Data Cloud Bulk Ingestion API calls using DC token
+  └─ Step 3: Data Cloud Bulk Ingestion API using DC token
              POST DataCloudInstanceURL/api/v1/ingest/jobs
-             PUT  .../jobs/{id}/batches  (CSV upload)
-             PATCH .../jobs/{id}         (close job)
-             GET  .../jobs/{id}          (poll status)
+             PUT  .../jobs/{id}/batches  (CSV, one PUT per batch)
+             PATCH .../jobs/{id}         (close job → UploadComplete)
+             GET  .../jobs/{id}          (poll until JobComplete)
 ```
 
 ---
@@ -248,65 +237,63 @@ B2C Job
 | `short_description` | string | `product.getShortDescription()` |
 | `long_description` | string | `product.getLongDescription()` |
 | `online_flag` | boolean | `product.isOnline()` |
-| `product_type` | string | hardcoded `"Variation Base Product"` |
+| `product_type` | string | derived from boolean methods (see note) |
+| `online_from` | datetime | `product.getOnlineFrom()` |
+| `online_to` | datetime | `product.getOnlineTo()` |
+| `last_modified` | datetime | `product.getLastModified()` |
+| `creation_date` | datetime | `product.getCreationDate()` |
+| `brand` | string | `product.getBrand()` |
+| `manufacturer_name` | string | `product.getManufacturerName()` |
 
----
-
-## B2C Commerce Scripting — Key Lessons Learned
-
-| Issue | Fix |
-|---|---|
-| Job parameter access | Use `parameters.InstanceURL` not `parameters.InstanceURL.stringValue` |
-| Require paths in job scripts | Full path: `require('int_datacloud_catalog/cartridge/scripts/...')` not `require('*/...')` |
-| `HTTPClient` error body | Use `client.text \|\| client.errorText` — `text` is null on error responses |
-| `signer.sign()` output | Already returns Base64 — do not wrap with `StringUtils.encodeBase64()` |
-| `signer.sign()` input | Pass `StringUtils.encodeBase64(signingInput)` — the API expects Base64-encoded input |
-| JS string quota | B2C caps JS strings at 1MB — filter master products only to stay under limit |
-| Job scope | Must be Sites → crocs_us (not Organization) for `ProductSearchModel` to work |
-| `steptypes.json` | Inner key must be `"parameters"` (plural) with `"parameters"` array inside |
-| Salesforce username | Sandbox username has no dot: `jasvirdhillon@salesforce.com` not `jasvir.dhillon@salesforce.com` |
-| Data Cloud token | Core JWT Bearer token cannot call DC API directly — must exchange via `/services/a360/token` |
-| DC grant type | Use `urn:salesforce:grant-type:external:cdp` with `subject_token` param |
+> **Note on `product_type`:** B2C Commerce's `dw.catalog.Product` API does not expose a `getProductType()` method — the platform only provides boolean methods: `isMaster()`, `isVariant()`, `isBundle()`, `isProductSet()`. The `product_type` field is derived using a ternary chain over these booleans:
+>
+> - `isMaster()` → `"Variation Base Product"`
+> - `isVariant()` → `"Variation Product"`
+> - `isBundle()` → `"Bundle"`
+> - `isProductSet()` → `"Set"`
+> - otherwise → `"Product"`
+>
+> These label strings can be renamed to suit your Data Cloud model. Apply product type filtering downstream in Data Cloud if needed.
 
 ---
 
 ## Troubleshooting
 
 **Step type not appearing in Business Manager**
-- Verify cartridge is on Business Manager site cartridge path
+- Verify `int_datacloud_catalog` is on the Business Manager site cartridge path (not just the storefront site)
 - Log out and back into BM after uploading
 
 **`invalid_grant` / `invalid assertion`**
-- Signature encoding issue — `signer.sign()` already returns Base64, do not double-encode
+- Certificate mismatch — verify that the `.pem` uploaded to the External Client App matches the private key in the `.p12` imported into BM (they must be a keypair)
+- `signer.sign()` already returns Base64 — do not double-wrap with `StringUtils.encodeBase64()`
 
 **`invalid_client` / `invalid client credentials`**
-- Consumer key mismatch — verify against live External Client App UI
-- Certificate mismatch — verify PKCS12 cert fingerprint matches cert uploaded to ECA
-- Wrong username — check exact username in SF Setup → Users (sandbox may differ from email)
+- Consumer key mismatch — verify against the live External Client App UI
+- Wrong username — check the exact value in SF Setup → Users; sandbox usernames often differ from email addresses
 
 **`invalid subject token` on DC token exchange**
-- Wrong grant type — use `urn:salesforce:grant-type:external:cdp`
-- Wrong param name — use `subject_token` not `app_token` or `app_actor_token`
+- Wrong grant type — must be `urn:salesforce:grant-type:external:cdp`
+- Wrong param name — must be `subject_token`, not `app_token` or `app_actor_token`
 
 **`404` on Data Cloud API**
-- Using Salesforce Core URL instead of DC tenant URL (`*.c360a.salesforce.com`)
+- Using Salesforce Core URL instead of Data Cloud tenant URL (`*.c360a.salesforce.com`)
 
 **`401` on Data Cloud API**
 - Using Core access token directly — must exchange for DC token first via `/services/a360/token`
 
 **`400` on createJob**
-- Connector name or object name case mismatch — must exactly match Data Cloud Setup
-- DC token exchange silently failed — check authService log for exchange response
+- Connector name or object name case mismatch — must exactly match what's in Data Cloud Setup
+- Check the error body for detail
 
 **Check logs at:**
-- BM → Administration → Operations → Log Center → `exportProductsToDataCloud`
+BM → Administration → Operations → Log Center → custom log `exportProductsToDataCloud`
 
 ---
 
 ## Security Notes
 
 - Never commit `dw.json` to git (contains sandbox credentials)
-- Never commit `*.pem`, `*.der`, `*.p12` key files
+- Never commit `*.pem`, `*.der`, or `*.p12` key files
 - Rotate the B2C Access Key after sharing in any session
 - Consumer Key goes in BM job parameters only, never in code
-- PKCS12 password: stored in team password manager (not in this file)
+- PKCS12 password: store in your team's password manager

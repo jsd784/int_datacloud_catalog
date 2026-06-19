@@ -7,9 +7,6 @@ var KeyRef     = require('dw/crypto/KeyRef');
 var TOKEN_ENDPOINT = '/services/oauth2/token';
 var B64_CHARS      = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-/**
- * Base64url-encodes a string using pure JS (no Java bridge needed).
- */
 function base64UrlEncode(str) {
     var bytes = [];
     for (var i = 0; i < str.length; i++) {
@@ -41,21 +38,22 @@ function base64UrlEncode(str) {
 
 /**
  * Signs a JWT using RS256 via dw.crypto.Signature and dw.crypto.KeyRef.
- * Key must be imported in Business Manager → Administration → Operations → Private Keys and Certificates
- * Alias: crocs_b2c_datacloud_key
+ * The private key must be imported in Business Manager →
+ * Administration → Operations → Private Keys and Certificates.
  *
- * @param {string} consumerKey - External Client App consumer key
- * @param {string} username    - Salesforce username to authenticate as
- * @param {string} loginURL    - e.g. https://test.salesforce.com
+ * @param {string} consumerKey   - External Client App consumer key
+ * @param {string} username      - Salesforce username pre-authorized on the app
+ * @param {string} audience      - JWT audience (https://test.salesforce.com for sandbox)
+ * @param {string} privateKeyAlias - Alias of the key in BM certificate store
  * @returns {string} signed JWT assertion
  */
-function signJWT(consumerKey, username, loginURL) {
+function signJWT(consumerKey, username, audience, privateKeyAlias) {
     var header  = { alg: 'RS256', typ: 'JWT' };
     var nowSecs = Math.floor(new Date().getTime() / 1000);
     var payload = {
         iss: consumerKey,
         sub: username,
-        aud: loginURL,
+        aud: audience,
         exp: nowSecs + 180
     };
 
@@ -66,7 +64,7 @@ function signJWT(consumerKey, username, loginURL) {
     var StringUtils       = require('dw/util/StringUtils');
     var base64SigningInput = StringUtils.encodeBase64(signingInput);
 
-    var privateKeyRef   = new KeyRef('crocs_b2c_datacloud_key');
+    var privateKeyRef   = new KeyRef(privateKeyAlias);
     var signer          = new Signature();
     var rawSignature    = signer.sign(base64SigningInput, privateKeyRef, 'SHA256withRSA');
     var signatureB64Url = rawSignature.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
@@ -77,14 +75,17 @@ function signJWT(consumerKey, username, loginURL) {
 /**
  * Gets a Data Cloud access token using JWT Bearer flow.
  *
- * @param {string} loginURL    - Salesforce login URL (https://test.salesforce.com for sandbox)
- * @param {string} consumerKey - External Client App consumer key
- * @param {string} username    - Salesforce username pre-authorized on the app
- * @returns {{ accessToken: string, dataCloudInstanceURL: string }}
+ * Step 1: POST JWT to Salesforce Core token endpoint → get Core access token
+ * Step 2: Exchange Core token for Data Cloud token via /services/a360/token
+ *
+ * @param {string} loginURL        - Salesforce My Domain URL (e.g. https://yourorg.sandbox.my.salesforce.com)
+ * @param {string} consumerKey     - External Client App consumer key
+ * @param {string} username        - Salesforce username pre-authorized on the app
+ * @param {string} privateKeyAlias - Alias of the private key in BM certificate store
+ * @returns {{ accessToken: string }}
  */
-function getAccessToken(loginURL, consumerKey, username) {
-    // Step 1: JWT Bearer → Salesforce Core access token
-    var jwt = signJWT(consumerKey, username, 'https://test.salesforce.com');
+function getAccessToken(loginURL, consumerKey, username, privateKeyAlias) {
+    var jwt = signJWT(consumerKey, username, 'https://test.salesforce.com', privateKeyAlias);
 
     var client = new HTTPClient();
     client.setTimeout(10000);
@@ -105,27 +106,17 @@ function getAccessToken(loginURL, consumerKey, username) {
         throw new Error('Auth response missing access_token: ' + responseBody);
     }
 
-    // Step 2: Exchange Salesforce Core token for Data Cloud token
-    var Logger = require('dw/system/Logger');
-    var log    = Logger.getLogger('int_datacloud_catalog', 'authService');
-
+    // Exchange Salesforce Core token for Data Cloud token
     var dcClient = new HTTPClient();
     dcClient.setTimeout(10000);
-    var dcTokenURL = sfResponse.instance_url + '/services/a360/token';
-    log.info('DC token exchange URL: {0}', dcTokenURL);
-    dcClient.open('POST', dcTokenURL);
+    dcClient.open('POST', sfResponse.instance_url + '/services/a360/token');
     dcClient.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
 
-    // dcClient.send('grant_type=urn%3Asalesforce%3Agrant-type%3Aconnected%3Aapp-token'
-    //     + '&subject_token=' + encodeURIComponent(sfResponse.access_token)
-    //     + '&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token');
-    // FIX 1: Use the official Data Cloud Exchange Grant Type (urn:salesforce:grant-type:external:cdp)
     dcClient.send('grant_type=urn%3Asalesforce%3Agrant-type%3Aexternal%3Acdp'
         + '&subject_token=' + encodeURIComponent(sfResponse.access_token)
         + '&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token');
 
     var dcBody = dcClient.text || dcClient.errorText || '(empty)';
-    log.info('DC token exchange response [{0}]: {1}', dcClient.statusCode, dcBody);
     if (dcClient.statusCode !== 200) {
         throw new Error('DC token exchange failed [' + dcClient.statusCode + ']: ' + dcBody);
     }
@@ -135,13 +126,8 @@ function getAccessToken(loginURL, consumerKey, username) {
         throw new Error('DC token exchange error: ' + dcResponse.error + ' - ' + dcResponse.error_description);
     }
 
-    // return {
-    //     accessToken: dcResponse.access_token
-    // };
-    // FIX 2: Return BOTH the token and the tenant-specific instance_url required by exportProductsToDataCloud.js[cite: 13, 14]
     return {
-        accessToken: dcResponse.access_token,
-        dataCloudInstanceURL: dcResponse.instance_url
+        accessToken: dcResponse.access_token
     };
 }
 
