@@ -15,6 +15,14 @@
                             "@required": true,
                             "@trim": true,
                             "description": "Data Cloud Ingestion API connector name e.g. MyB2CConnector"
+                        },
+                        {
+                            "@name": "JobConfig",
+                            "@type": "string",
+                            "@required": "false",
+                            "@trim": "true",
+                            "description": "Optional JSON config. Defaults: online products only, all site products (no category scope), 800KB batches, Product object, int_datacloud.auth service, 120 poll attempts (~10 min), debug logging off.",
+                            "default-value": "{\"onlineOnly\":true,\"inStockOnly\":false,\"catalogId\":\"\",\"categoryId\":\"root\",\"categoryRollup\":true,\"objectName\":\"Product\",\"serviceId\":\"int_datacloud.auth\",\"batchSizeKB\":800,\"maxPollAttempts\":120,\"enableDebugLogging\":false}"
                         }
                     ]
                 },

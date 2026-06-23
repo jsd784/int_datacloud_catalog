@@ -3,14 +3,12 @@
 var LocalServiceRegistry = require('dw/svc/LocalServiceRegistry');
 var HTTPClient            = require('dw/net/HTTPClient');
 
-var SERVICE_ID = 'int_datacloud.auth';
-
 /**
  * Gets the OAuth service registered in BM → Operations → Services.
- * Credential: URL = Salesforce Core My Domain URL. OIC fields: Consumer Key → credential.custom.consumerKey, Consumer Secret → credential.custom.consumerSecret.
+ * Credential: URL = Salesforce Core My Domain URL. OIC fields: Consumer Key/Secret in credential.
  */
-function getOAuthService() {
-    return LocalServiceRegistry.createService(SERVICE_ID, {
+function getOAuthService(serviceId) {
+    return LocalServiceRegistry.createService(serviceId, {
         createRequest: function (svc, params) {
             var credential = svc.getConfiguration().getCredential();
             if (!credential) {
@@ -57,11 +55,13 @@ function getOAuthService() {
  * Service 'int_datacloud.auth' must be configured in BM → Operations → Services.
  * See README for credential setup instructions.
  *
+ * @param {string} serviceId - BM Service ID (default: 'int_datacloud.auth')
  * @returns {{ accessToken: string, dataCloudInstanceURL: string }}
  */
-function getAccessToken() {
+function getAccessToken(serviceId) {
+    var resolvedServiceId = serviceId || 'int_datacloud.auth';
     // Step 1: Client Credentials → Salesforce Core token
-    var svc    = getOAuthService();
+    var svc    = getOAuthService(resolvedServiceId);
     var result = svc.call();
 
     if (!result.isOk()) {

@@ -89,14 +89,15 @@ function abortJob(instanceURL, accessToken, jobId) {
 }
 
 // /**
-//  * Polls job status until JobComplete or terminal state (max 10 minutes).
+//  * Polls job status until JobComplete or terminal state.
 //  * @param {string} instanceURL  - Data Cloud instance URL
 //  * @param {string} accessToken  - Bearer token
 //  * @param {string} jobId        - Job ID to poll
+//  * @param {number} maxAttempts  - max poll attempts (default 120 × 5s = 10 min)
 //  * @returns {string} Final job state
 //  */
-// function waitForJobCompletion(instanceURL, accessToken, jobId) {
-//     var MAX_ATTEMPTS   = 120; // 120 × 5s = 10 minutes max
+// function waitForJobCompletion(instanceURL, accessToken, jobId, maxAttempts) {
+//     var MAX_ATTEMPTS   = maxAttempts || 120;
 //     var terminalStates = ['JobComplete', 'Failed', 'Aborted'];
 
 //     for (var i = 0; i < MAX_ATTEMPTS; i++) {
