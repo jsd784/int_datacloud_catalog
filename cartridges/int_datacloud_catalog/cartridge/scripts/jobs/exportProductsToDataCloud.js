@@ -32,14 +32,12 @@ function formatDate(d) {
     try { return new Date(d.getTime()).toISOString(); } catch (e) { return ''; }
 }
 
-// Flush batch when accumulated characters approach 800KB — leaves 200KB headroom
-// for products with long descriptions that can't be predicted row-by-row.
+// Flush batch at 800KB — leaves 200KB headroom under B2C's 1MB JS string quota.
 var BATCH_SIZE_LIMIT = 800000;
 
 /**
- * Iterates all site products and calls uploadFn for each batch.
+ * Iterates all online site products and calls uploadFn for each batch.
  * Batches by character count to reliably stay under B2C Commerce's 1MB JS string quota.
- * No online filter applied — filter downstream in Data Cloud if needed.
  * @param {Function} uploadFn - called with (csvBatch) for each batch
  * @returns {number} total products exported
  */
@@ -168,6 +166,12 @@ function execute(parameters) {
         }
     } catch (e) {
         log.error('Failed to upload product data: {0}', e.message);
+        try {
+            ingestionService.abortJob(dataCloudInstanceURL, auth.accessToken, jobId);
+            log.info('Aborted orphaned ingestion job: {0}', jobId);
+        } catch (abortErr) {
+            log.error('Failed to abort job {0}: {1}', jobId, abortErr.message);
+        }
         return new Status(Status.ERROR, 'UPLOAD_FAILED', e.message);
     }
 

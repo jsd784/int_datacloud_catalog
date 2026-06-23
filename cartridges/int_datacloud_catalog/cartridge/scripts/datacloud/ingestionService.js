@@ -70,6 +70,25 @@ function closeJob(instanceURL, accessToken, jobId) {
 }
 
 /**
+ * Aborts an open job — called on upload failure to avoid leaving orphaned jobs in Data Cloud.
+ * @param {string} instanceURL  - Data Cloud instance URL
+ * @param {string} accessToken  - Bearer token
+ * @param {string} jobId        - Job ID from createJob
+ */
+function abortJob(instanceURL, accessToken, jobId) {
+    var client = new HTTPClient();
+    client.setTimeout(15000);
+    client.open('PATCH', instanceURL + BASE_PATH + '/jobs/' + jobId);
+    client.setRequestHeader('Authorization', 'Bearer ' + accessToken);
+    client.setRequestHeader('Content-Type', 'application/json');
+    client.send(JSON.stringify({ state: 'Aborted' }));
+
+    if (client.statusCode !== 200) {
+        throw new Error('abortJob failed [' + client.statusCode + ']: ' + (client.text || client.errorText));
+    }
+}
+
+/**
  * Polls job status until JobComplete or terminal state (max 10 minutes).
  * @param {string} instanceURL  - Data Cloud instance URL
  * @param {string} accessToken  - Bearer token
@@ -106,15 +125,14 @@ function waitForJobCompletion(instanceURL, accessToken, jobId) {
     return 'Unknown';
 }
 
-// dw.Thread.sleep() is unavailable in B2C Commerce's Rhino engine — busy-wait instead
 function localSleep(milliseconds) {
-    var startTime = new Date().getTime();
-    while (new Date().getTime() < startTime + milliseconds) { /* spin */ }
+    Packages.java.lang.Thread.sleep(milliseconds);
 }
 
 module.exports = {
     createJob:            createJob,
     uploadJobData:        uploadJobData,
     closeJob:             closeJob,
+    abortJob:             abortJob,
     waitForJobCompletion: waitForJobCompletion
 };
