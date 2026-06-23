@@ -76,8 +76,8 @@ function closeJob(instanceURL, accessToken, jobId) {
  * @param {string} jobId        - Job ID to poll
  * @returns {string} Final job state
  */
-function waitForJobCompletion(instanceURL, accessToken, jobId) {
-    var MAX_ATTEMPTS   = 120; // 120 × 5s = 10 minutes max
+function waitForJobCompletion(instanceURL, accessToken, jobId, maxAttempts) {
+    var MAX_ATTEMPTS   = maxAttempts || 120; // 120 × 5s = 10 minutes max
     var terminalStates = ['JobComplete', 'Failed', 'Aborted'];
 
     for (var i = 0; i < MAX_ATTEMPTS; i++) {
