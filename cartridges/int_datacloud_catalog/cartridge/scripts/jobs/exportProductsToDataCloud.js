@@ -1,17 +1,15 @@
 'use strict';
 
-var ProductMgr         = require('dw/catalog/ProductMgr');
-var Logger             = require('dw/system/Logger');
-var Site               = require('dw/system/Site');
-var Status             = require('dw/system/Status');
-var HashSet            = require('dw/util/HashSet');
-
+var ProductMgr = require('dw/catalog/ProductMgr');
+var Logger     = require('dw/system/Logger');
+var Site       = require('dw/system/Site');
+var Status     = require('dw/system/Status');
 var authService      = require('int_datacloud_catalog/cartridge/scripts/datacloud/authService');
 var ingestionService = require('int_datacloud_catalog/cartridge/scripts/datacloud/ingestionService');
 
 var log = Logger.getLogger('int_datacloud_catalog', 'exportProductsToDataCloud');
 
-var CSV_HEADER = 'product_id,product_name,short_description,long_description,online_flag,product_type,online_from,online_to,last_modified,creation_date,brand,manufacturer_name';
+var CSV_HEADER = 'product_id,product_name,short_description,long_description,online_flag,product_type,online_from,online_to,last_modified,creation_date,brand,manufacturer_name,in_stock';
 
 /**
  * Escapes a value for CSV: wraps in double quotes and escapes internal quotes.
@@ -39,19 +37,18 @@ function formatDate(d) {
 var BATCH_SIZE_LIMIT = 800000;
 
 /**
- * Iterates all online products and calls uploadFn for each batch.
- * Batches by character count rather than row count to reliably stay under
- * B2C Commerce's 1MB JS string quota regardless of description length.
+ * Iterates all site products and calls uploadFn for each batch.
+ * Batches by character count to reliably stay under B2C Commerce's 1MB JS string quota.
+ * No online filter applied — filter downstream in Data Cloud if needed.
  * @param {Function} uploadFn - called with (csvBatch) for each batch
  * @returns {number} total products exported
  */
 function uploadProductsInBatches(uploadFn) {
-    var allProducts  = ProductMgr.queryAllSiteProducts();
-    var batchRows    = [CSV_HEADER];
-    var batchSize    = CSV_HEADER.length;
-    var total        = 0;
-    var skipped      = 0;
-    var seenIds      = new HashSet();
+    var allProducts = ProductMgr.queryAllSiteProducts();
+    var batchRows   = [CSV_HEADER];
+    var batchSize   = CSV_HEADER.length;
+    var total       = 0;
+    var skipped     = 0;
 
     try {
         while (allProducts.hasNext()) {
@@ -61,10 +58,17 @@ function uploadProductsInBatches(uploadFn) {
             if (!product.getName()) { skipped++; continue; }
 
             var productId = product.getID();
-            if (!seenIds.add(productId)) { skipped++; continue; }
 
             var shortDesc = product.getShortDescription() ? product.getShortDescription().toString() : '';
             var longDesc  = product.getLongDescription()  ? product.getLongDescription().toString()  : '';
+
+            var inStock = false;
+            try {
+                var availModel = product.getAvailabilityModel();
+                inStock = availModel ? availModel.isInStock() : false;
+            } catch (e) {
+                inStock = false;
+            }
 
             var row = [
                 csvEscape(productId),
@@ -78,7 +82,8 @@ function uploadProductsInBatches(uploadFn) {
                 csvEscape(formatDate(product.getLastModified())),
                 csvEscape(formatDate(product.getCreationDate())),
                 csvEscape(product.getBrand()),
-                csvEscape(product.getManufacturerName())
+                csvEscape(product.getManufacturerName()),
+                csvEscape(inStock)
             ].join(',');
 
             batchRows.push(row);
@@ -99,7 +104,7 @@ function uploadProductsInBatches(uploadFn) {
         allProducts.close();
     }
 
-    log.info('Included: {0}, Skipped (offline or duplicate): {1}', total, skipped);
+    log.info('Exported: {0}, Skipped (no name or duplicate): {1}', total, skipped);
     return total;
 }
 
@@ -111,31 +116,28 @@ function uploadProductsInBatches(uploadFn) {
  * @returns {dw.system.Status}
  */
 function execute(parameters) {
-    var loginURL             = parameters.InstanceURL;
-    var consumerKey          = parameters.ConsumerKey;
-    var sfUsername           = parameters.SFUsername;
-    var connectorName        = parameters.ConnectorName;
-    var objectName           = parameters.ObjectName;
-    var dataCloudInstanceURL = parameters.DataCloudInstanceURL;
-    var privateKeyAlias      = parameters.PrivateKeyAlias;
+    var connectorName = parameters.ConnectorName;
+    var objectName    = 'Product';
 
-    if (!loginURL || !consumerKey || !sfUsername || !connectorName || !objectName || !dataCloudInstanceURL || !privateKeyAlias) {
-        log.error('Missing required job parameter(s) — check InstanceURL, ConsumerKey, SFUsername, ConnectorName, ObjectName, DataCloudInstanceURL, PrivateKeyAlias');
-        return new Status(Status.ERROR, 'MISSING_PARAMS', 'One or more required parameters are blank');
+    if (!connectorName) {
+        log.error('Missing required job parameter ConnectorName');
+        return new Status(Status.ERROR, 'MISSING_PARAMS', 'ConnectorName parameter is blank');
     }
 
     var siteID = Site.getCurrent().getID();
     log.info('Starting product export for site: {0}', siteID);
 
-    // Step 1: Get access token via JWT Bearer flow
+    // Step 1: Get Data Cloud access token via Client Credentials flow
     var auth;
     try {
-        auth = authService.getAccessToken(loginURL, consumerKey, sfUsername, privateKeyAlias);
+        auth = authService.getAccessToken();
         log.info('Authentication successful');
     } catch (e) {
         log.error('Authentication failed: {0}', e.message);
         return new Status(Status.ERROR, 'AUTH_FAILED', e.message);
     }
+
+    var dataCloudInstanceURL = auth.dataCloudInstanceURL;
 
     // Step 2: Create bulk ingestion job
     var jobId;
@@ -169,7 +171,7 @@ function execute(parameters) {
         return new Status(Status.ERROR, 'UPLOAD_FAILED', e.message);
     }
 
-    // Step 5: Close job — signals Data Cloud to begin processing
+    // Step 4: Close job — signals Data Cloud to begin processing
     try {
         ingestionService.closeJob(dataCloudInstanceURL, auth.accessToken, jobId);
         log.info('Closed job: {0}', jobId);
@@ -178,7 +180,7 @@ function execute(parameters) {
         return new Status(Status.ERROR, 'CLOSE_JOB_FAILED', e.message);
     }
 
-    // Step 6: Poll until JobComplete or Failed
+    // Step 5: Poll until JobComplete or Failed
     var finalState;
     try {
         finalState = ingestionService.waitForJobCompletion(dataCloudInstanceURL, auth.accessToken, jobId);

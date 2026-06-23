@@ -1,15 +1,15 @@
 # B2C Commerce — Data Cloud Catalog Integration
 
-This cartridge exports product catalog data from Salesforce B2C Commerce to Salesforce Data Cloud using the Ingestion API (Bulk mode) and JWT Bearer authentication.
+This cartridge exports product catalog data from Salesforce B2C Commerce to Salesforce Data Cloud using the Ingestion API (Bulk mode) and OAuth 2.0 Client Credentials authentication.
 
 ---
 
 ## What It Does
 
-1. Queries **all online products** from the site catalog using `ProductMgr.queryAllSiteProducts()` — includes masters, variants, bundles, sets, and simple products; offline products are excluded
-2. Builds a CSV with 12 fields: `product_id`, `product_name`, `short_description`, `long_description`, `online_flag`, `product_type`, `online_from`, `online_to`, `last_modified`, `creation_date`, `brand`, `manufacturer_name`
-3. Uploads in batches of 500 rows to stay within B2C Commerce's 1MB JS string quota
-4. Authenticates with Salesforce using JWT Bearer flow (server-to-server, no user login required)
+1. Queries all **online** products from the site catalog using `ProductMgr.queryAllSiteProducts()` — includes masters, variants, bundles, sets, and simple products; offline products are skipped
+2. Builds a CSV with 13 fields: `product_id`, `product_name`, `short_description`, `long_description`, `online_flag`, `product_type`, `online_from`, `online_to`, `last_modified`, `creation_date`, `brand`, `manufacturer_name`, `in_stock`
+3. Uploads in character-size-aware batches to stay within B2C Commerce's 1MB JS string quota
+4. Authenticates with Salesforce using OAuth 2.0 Client Credentials flow via a single registered B2C Service
 5. Exchanges the Salesforce Core token for a Data Cloud tenant token via `/services/a360/token`
 6. Pushes each CSV batch to Data Cloud via the Bulk Ingestion API, then polls until `JobComplete`
 
@@ -24,7 +24,7 @@ b2c/
 │       ├── cartridge/
 │       │   └── scripts/
 │       │       ├── datacloud/
-│       │       │   ├── authService.js       # JWT signing + two-step token exchange
+│       │       │   ├── authService.js       # Client Credentials + two-step token exchange
 │       │       │   └── ingestionService.js  # Data Cloud Bulk Ingestion API calls
 │       │       └── jobs/
 │       │           └── exportProductsToDataCloud.js  # Job entry point
@@ -40,77 +40,73 @@ b2c/
 
 ## Part 1: Salesforce Core Setup
 
-### Step 1: Generate RSA Key Pair
+### Step 1: Create an External Client App
 
-Run these commands locally. Store the generated files outside the repo (they must never be committed).
-
-```bash
-# Generate private key
-openssl genrsa -out datacloud_private_key.pem 2048
-
-# Generate self-signed certificate (valid 365 days)
-openssl req -new -x509 -key datacloud_private_key.pem \
-  -out datacloud_certificate.pem -days 365 \
-  -subj "/C=US/ST=CA/L=San Francisco/O=YourOrg/OU=Engineering/CN=b2c-datacloud"
-
-# Create PKCS12 bundle for Business Manager import, by updating passout pass. 
-openssl pkcs12 -export \
-  -out b2c_datacloud_key.p12 \
-  -inkey datacloud_private_key.pem \
-  -in datacloud_certificate.pem \
-  -passout pass:your-chosen-password
-```
-> Note your-chosen-password it will be needed in **Step 1 of B2C Commerce Setup**
-> **Never commit `*.pem`, `*.der`, or `*.p12` files to git.**
-
----
-
-### Step 2: Create an External Client App
+The cartridge uses OAuth 2.0 Client Credentials flow — only a Consumer Key and Consumer Secret are needed.
 
 1. In Salesforce Core: Setup → **External Client App Manager** → **New External Client App**
 2. Fill in:
    - App Name: any descriptive name (e.g. `B2C DataCloud Ingestion`)
    - Contact Email: your email
-3. Scroll Down and Expand **API(Enable OAuth Settings)**:
+3. Scroll down and expand **API (Enable OAuth Settings)**:
    - Enable **Enable OAuth**: ✅
    - Callback URL: `https://login.salesforce.com/callback`
    - Selected OAuth Scopes:
      - `Manage Data Cloud Ingestion API data (cdp_ingest_api)`
      - `Manage user data via APIs (api)`
      - `Perform requests at any time (refresh_token, offline_access)`
-   - Enable **JWT Bearer Flow**: ✅
-   - Upload certificate: `datacloud_certificate.pem` (the `.pem` file, not the `.p12`)
-4. Save. 
-5. Goto **Settings** -> **OAuth Settings** Copy the **Consumer Key** — it goes in BM job parameters only (never in code).
+   - Enable **Client Credentials Flow**: ✅ (do **not** enable JWT Bearer Flow)
+4. Save.
+5. Go to **Settings** → **OAuth Settings** → copy the **Consumer Key** and **Consumer Secret** — these go into the BM Service credential (never in code).
 
 ---
 
-### Step 3: Pre-authorize a User for JWT Bearer
+### Step 2: Create a Run-As Integration User
 
-The JWT `sub` claim must match a Salesforce user who is explicitly pre-authorized on the app.
+The Client Credentials flow executes as a named Salesforce user — create a dedicated integration user rather than using a personal account.
 
-1. External Client App Manager → your app → Click **Edit Policies**:
-2. App Policies
-   - Start Page - OAuth.
-   - Permitted Users: `Admin approved users are pre-authorized`
-   - Select Profiles: add the profile of the user you'll use (e.g. `System Administrator`)
-   - Select Permission Sets: `Customer 360 Data Platform Integration`
-3. OAuth Policies:
-   - Permitted Users: `Admin approved users are pre-authorized`
-   - OAuth Start URL: `https://login.salesforce.com`
+1. Setup → **Users** → **New User**
+2. Fill in:
+   - First Name: `B2C DataCloud`
+   - Last Name: `Integration`
+   - Email: your team's shared email
+   - Username: any unique value (e.g. `b2c.datacloud.integration@yourorg.com`)
+   - User License: `Salesforce`
+   - Role/Profile: `System Administrator` (or a custom integration profile with API access)
+3. Save — note the exact **Username** value, you'll need it in the next step
+
+**Assign a Data Cloud permission set:**
+
+The permission set name depends on your Salesforce edition. Common options:
+
+| Edition | Permission Set to Assign |
+|---|---|
+| Data Cloud add-on | `Data Cloud Architect` or your permission set |
+
+1. On the user record → **Permission Set Assignments** → **Edit Assignments**
+2. Add whichever Data Cloud permission set is available in your org (check Setup → Permission Sets and filter by "Data Cloud" or "CDP")
+3. Save
+
+> If unsure which to use, assign the one your Data Cloud admin account already has — the integration user needs the same level of Data Cloud access.
+
+---
+
+### Step 3: Assign the Run-As User to the External Client App
+
+1. External Client App Manager → your app → **Edit Policies**
+2. Under **Client Credentials Flow**:
+   - Run As: select the integration user created in Step 2
+3. Under **OAuth Policies**:
    - IP Relaxation: `Relax IP restrictions`
-   - Refresh Token Policy: `Refresh token is valid until revoked`
 4. Save
-
-> **Important:** The username in the job parameter (`SFUsername`) must exactly match the **Username** field in Setup → Users — not the email address. In sandboxes these often differ.
 
 ---
 
 ### Step 4: Create a Data Cloud Ingestion API Connector
 
 1. Data Cloud Setup → **Ingestion API** → **New**
-2. Choose a connector name (you'll use this exact value in the `ConnectorName` job parameter)
-3. Upload your schema file defining the `Product` object with the 6 fields (see schema below)
+2. Choose a connector name — you'll use this exact value in the `ConnectorName` job parameter
+3. Upload the schema file from `datacloud/product-ingestion-schema.yaml` in this repo
 4. Create a Data Stream:
    - Object: `Product`
    - Primary Key: `product_id`
@@ -120,24 +116,46 @@ The JWT `sub` claim must match a Salesforce user who is explicitly pre-authorize
 
 ---
 
-### Step 5: Find Your Data Cloud Tenant URL
-
-1. Data Cloud Setup → **Data Cloud Settings**
-2. The tenant URL looks like: `https://xxxx.c360a.salesforce.com`
-3. Use this as the `DataCloudInstanceURL` job parameter — this is **different** from the Salesforce Core My Domain URL
-
----
-
 ## Part 2: B2C Commerce Setup
 
-### Step 1: Import Private Key into Business Manager
+### Step 1: Configure the Auth Service in Business Manager
 
-1. BM → **Administration → Operations → Private Keys and Certificates**
-2. Click **Import**
-3. Upload your `.p12` file
-4. Enter the password you set during PKCS12 creation from **Step 1 of Salesforce Core Setup**
-5. Set an **Alias** — this is the value you'll use for the `PrivateKeyAlias` job parameter (e.g. `b2c_datacloud_key`)
-6. Save
+The cartridge uses a single B2C Service for OAuth authentication. 
+
+Create **Credentials** — go to **Operations → Services → Service Credentials** → Create credential (e.g. `int_datacloud.auth.cred`):
+
+| Field | Value |
+|---|---|
+| Name | `int_datacloud.auth.cred` |
+| URL | `https://yourorg.sandbox.my.salesforce.com` (Salesforce Core My Domain URL — do **not** use `lightning.force.com`) |
+| Consumer Key | Consumer Key from the External Client App |
+| Consumer Secret | Consumer Secret from the External Client App |
+
+> Leave User, Password, and all other fields blank.
+
+Create **Profile** — **BM → Administration → Operations → Services → Profile** — click New Profile:
+
+| Field | Value |
+|---|---|
+| Name | `int_datacloud.auth.profile` |
+| Timeout (ms) | `10000` |
+| CB Enabled | ✅ |
+
+
+Create it in **BM → Administration → Operations → Services → New Service**:
+
+**Service:**
+
+| Field | Value |
+|---|---|
+| Name | `int_datacloud.auth` |
+| Type | `HTTP` |
+| Enabled | ✅ |
+| Log Name Prefix | `int_datacloud_auth` |
+| Communication Log Enabled | ✅ |
+| Profile | `int_datacloud.auth.profile` |
+| Credentials | `int_datacloud.auth.cred` |
+
 
 ---
 
@@ -166,7 +184,7 @@ Edit `dw.json`:
 }
 ```
 
-> Get the access key from: BM → Administration → Organization → WebDAV Client Permissions → generate a new key.
+> Get the access key from: My User Profile -> Credentials → Manage Access Keys → WebDAV File Access and UX Studio → generate a new key.
 
 ```bash
 # Upload cartridge to your instance
@@ -192,13 +210,7 @@ npx dwupload --cartridge cartridges/int_datacloud_catalog
 
 | Parameter | Example Value | Notes |
 |---|---|---|
-| `InstanceURL` | `https://yourorg.sandbox.my.salesforce.com` | Salesforce Core My Domain URL — find it in SF Setup → My Domain. Do **not** use the Lightning UI URL (`lightning.force.com`) |
-| `ConsumerKey` | *(from External Client App)* | Do not hardcode in scripts |
-| `SFUsername` | `youruser@yourorg.sandbox` | Exact username from SF Setup → Users |
 | `ConnectorName` | `MyB2CConnector` | Case-sensitive, must match DC Setup |
-| `ObjectName` | `Product` | Case-sensitive, must match DC data stream object |
-| `DataCloudInstanceURL` | `https://xxxx.c360a.salesforce.com` | Data Cloud tenant URL from DC Settings |
-| `PrivateKeyAlias` | `b2c_datacloud_key` | Alias set during PKCS12 import in BM |
 
 5. Scope: **Sites → your site** (required for `ProductMgr` to query the correct catalog)
 6. Save → **Run Now**
@@ -218,16 +230,16 @@ After a successful run:
 ```
 B2C Job
   │
-  ├─ Step 1: JWT Bearer POST to InstanceURL/services/oauth2/token
-  │          JWT signed RS256 using private key alias (PKCS12 stored in BM)
+  ├─ Step 1: Client Credentials POST to InstanceURL/services/oauth2/token
+  │          client_id + client_secret from BM Service credential
   │          → Returns: Salesforce Core access_token + instance_url
   │
   ├─ Step 2: Token exchange POST to instance_url/services/a360/token
   │          grant_type=urn:salesforce:grant-type:external:cdp
-  │          → Returns: Data Cloud access_token
+  │          → Returns: Data Cloud access_token + instance_url (DC tenant)
   │
   └─ Step 3: Data Cloud Bulk Ingestion API using DC token
-             POST DataCloudInstanceURL/api/v1/ingest/jobs
+             POST {dc_instance_url}/api/v1/ingest/jobs
              PUT  .../jobs/{id}/batches  (CSV, one PUT per batch)
              PATCH .../jobs/{id}         (close job → UploadComplete)
              GET  .../jobs/{id}          (poll until JobComplete)
@@ -251,6 +263,7 @@ B2C Job
 | `creation_date` | datetime | `product.getCreationDate()` |
 | `brand` | string | `product.getBrand()` |
 | `manufacturer_name` | string | `product.getManufacturerName()` |
+| `in_stock` | boolean | `product.getAvailabilityModel().isInStock()` |
 
 > **Note on `product_type`:** B2C Commerce's `dw.catalog.Product` API does not expose a `getProductType()` method — the platform only provides boolean methods: `isMaster()`, `isVariant()`, `isBundle()`, `isProductSet()`. The `product_type` field is derived using a ternary chain over these booleans:
 >
@@ -302,7 +315,5 @@ BM → Administration → Operations → Log Center → custom log `exportProduc
 ## Security Notes
 
 - Never commit `dw.json` to git (contains sandbox credentials)
-- Never commit `*.pem`, `*.der`, or `*.p12` key files
 - Rotate the B2C Access Key after sharing in any session
 - Consumer Key goes in BM job parameters only, never in code
-- PKCS12 password: store in your team's password manager
