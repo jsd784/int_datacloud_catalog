@@ -12,7 +12,7 @@ function getOAuthService(serviceId) {
         createRequest: function (svc, params) {
             var credential = svc.getConfiguration().getCredential();
             if (!credential) {
-                throw new Error('Service credential not configured — assign a credential to service "' + SERVICE_ID + '" in BM → Operations → Services');
+                throw new Error('Service credential not configured — assign a credential to service "' + serviceId + '" in BM → Operations → Services');
             }
 
             var clientId     = credential.custom.consumerKey;
