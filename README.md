@@ -208,9 +208,32 @@ npx dwupload --cartridge cartridges/int_datacloud_catalog
 3. **Job Steps** →**Configure a Step** → search for `custom.ExportProductsToDataCloud`
 4. Set all parameters:
 
-| Parameter | Example Value | Notes |
+| Parameter | Required | Example Value | Notes |
+|---|---|---|---|
+| `ConnectorName` | ✅ | `MyB2CConnector` | Case-sensitive, must match DC Setup |
+| `JobConfig` | — | *(see below)* | Optional JSON — omit to use all defaults |
+
+**Default behaviour (no `JobConfig` set):** Exports all online products from the full site catalog, skips offline and unnamed products, uploads in 800KB batches, authenticates via the `int_datacloud.auth` service, ingests into the `Product` object, and polls for up to 10 minutes. Debug logging is off.
+
+**`JobConfig` options (all optional — omit any key to use the default):**
+
+| Key | Default | Description |
 |---|---|---|
-| `ConnectorName` | `MyB2CConnector` | Case-sensitive, must match DC Setup |
+| `onlineOnly` | `true` | Skip offline products |
+| `inStockOnly` | `false` | Skip out-of-stock products |
+| `catalogId` | `""` | Catalog ID to scope by category — leave blank to query all site products |
+| `categoryId` | `"root"` | Category ID within the catalog (only used when `catalogId` is set) |
+| `categoryRollup` | `true` | `true` = include all sub-categories; `false` = direct products only |
+| `objectName` | `"Product"` | Data Cloud schema object name |
+| `serviceId` | `"int_datacloud.auth"` | BM Service ID for OAuth |
+| `batchSizeKB` | `800` | Batch flush threshold in KB (max ~900 to stay under 1MB quota) |
+| `maxPollAttempts` | `120` | Max poll cycles × 5s = 10 min default |
+| `enableDebugLogging` | `false` | Logs per-product detail and config at INFO level |
+
+**Example — online + in-stock only, scoped to a category, debug on:**
+```json
+{"onlineOnly":true,"inStockOnly":true,"catalogId":"storefront-catalog-en","categoryId":"womens-shoes","categoryRollup":true,"enableDebugLogging":true}
+```
 
 5. Scope: **Sites → your site** (required for `ProductMgr` to query the correct catalog)
 6. Save → **Run Now**
