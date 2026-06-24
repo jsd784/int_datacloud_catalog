@@ -88,51 +88,50 @@ function abortJob(instanceURL, accessToken, jobId) {
     }
 }
 
-/**
- * Polls job status until JobComplete or terminal state (max 10 minutes).
- * @param {string} instanceURL  - Data Cloud instance URL
- * @param {string} accessToken  - Bearer token
- * @param {string} jobId        - Job ID to poll
- * @returns {string} Final job state
- */
-function waitForJobCompletion(instanceURL, accessToken, jobId) {
-    var MAX_ATTEMPTS   = 120; // 120 × 5s = 10 minutes max
-    var terminalStates = ['JobComplete', 'Failed', 'Aborted'];
+// /**
+//  * Polls job status until JobComplete or terminal state (max 10 minutes).
+//  * @param {string} instanceURL  - Data Cloud instance URL
+//  * @param {string} accessToken  - Bearer token
+//  * @param {string} jobId        - Job ID to poll
+//  * @returns {string} Final job state
+//  */
+// function waitForJobCompletion(instanceURL, accessToken, jobId) {
+//     var MAX_ATTEMPTS   = 120; // 120 × 5s = 10 minutes max
+//     var terminalStates = ['JobComplete', 'Failed', 'Aborted'];
 
-    for (var i = 0; i < MAX_ATTEMPTS; i++) {
-        var client = new HTTPClient();
-        client.setTimeout(10000);
-        client.open('GET', instanceURL + BASE_PATH + '/jobs/' + jobId);
-        client.setRequestHeader('Authorization', 'Bearer ' + accessToken);
-        client.send();
+//     for (var i = 0; i < MAX_ATTEMPTS; i++) {
+//         var client = new HTTPClient();
+//         client.setTimeout(10000);
+//         client.open('GET', instanceURL + BASE_PATH + '/jobs/' + jobId);
+//         client.setRequestHeader('Authorization', 'Bearer ' + accessToken);
+//         client.send();
 
-        if (client.statusCode !== 200) {
-            throw new Error('getJobInfo failed [' + client.statusCode + ']: ' + (client.text || client.errorText));
-        }
+//         if (client.statusCode !== 200) {
+//             throw new Error('getJobInfo failed [' + client.statusCode + ']: ' + (client.text || client.errorText));
+//         }
 
-        var state = JSON.parse(client.text).state;
-        log.info('Polling Data Cloud — Attempt {0}/{1} — Status: {2}', (i + 1), MAX_ATTEMPTS, state);
+//         var state = JSON.parse(client.text).state;
+//         log.info('Polling Data Cloud — Attempt {0}/{1} — Status: {2}', (i + 1), MAX_ATTEMPTS, state);
 
-        if (terminalStates.indexOf(state) !== -1) {
-            return state;
-        }
+//         if (terminalStates.indexOf(state) !== -1) {
+//             return state;
+//         }
 
-        if (i < MAX_ATTEMPTS - 1) {
-            localSleep(5000);
-        }
-    }
+//         if (i < MAX_ATTEMPTS - 1) {
+//             localSleep(5000);
+//         }
+//     }
 
-    return 'Unknown';
-}
+//     return 'Unknown';
+// }
 
-function localSleep(milliseconds) {
-    Packages.java.lang.Thread.sleep(milliseconds);
-}
+// function localSleep(milliseconds) {
+//     Packages.java.lang.Thread.sleep(milliseconds);
+// }
 
 module.exports = {
     createJob:            createJob,
     uploadJobData:        uploadJobData,
     closeJob:             closeJob,
-    abortJob:             abortJob,
-    waitForJobCompletion: waitForJobCompletion
+    abortJob:             abortJob
 };

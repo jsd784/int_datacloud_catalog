@@ -175,30 +175,32 @@ function execute(parameters) {
         return new Status(Status.ERROR, 'UPLOAD_FAILED', e.message);
     }
 
-    // Step 4: Close job — signals Data Cloud to begin processing
+    // Step 4: Close job — signals Data Cloud to begin processing asynchronously
     try {
         ingestionService.closeJob(dataCloudInstanceURL, auth.accessToken, jobId);
-        log.info('Closed job: {0}', jobId);
+        log.info('Closed job: {0} Data Cloud will process asynchronously. Check Data Cloud ingestion logs for final status.', jobId);
     } catch (e) {
         log.error('Failed to close job: {0}', e.message);
         return new Status(Status.ERROR, 'CLOSE_JOB_FAILED', e.message);
     }
 
-    // Step 5: Poll until JobComplete or Failed
-    var finalState;
-    try {
-        finalState = ingestionService.waitForJobCompletion(dataCloudInstanceURL, auth.accessToken, jobId);
-        log.info('Job {0} finished with state: {1}', jobId, finalState);
-    } catch (e) {
-        log.error('Failed polling job status: {0}', e.message);
-        return new Status(Status.ERROR, 'POLL_FAILED', e.message);
-    }
+     return new Status(Status.OK);
 
-    if (finalState === 'JobComplete') {
-        return new Status(Status.OK);
-    }
+    // // Step 5: Poll until JobComplete or Failed
+    // var finalState;
+    // try {
+    //     finalState = ingestionService.waitForJobCompletion(dataCloudInstanceURL, auth.accessToken, jobId);
+    //     log.info('Job {0} finished with state: {1}', jobId, finalState);
+    // } catch (e) {
+    //     log.error('Failed polling job status: {0}', e.message);
+    //     return new Status(Status.ERROR, 'POLL_FAILED', e.message);
+    // }
 
-    return new Status(Status.ERROR, 'JOB_FAILED', 'Job ended with state: ' + finalState);
+    // if (finalState === 'JobComplete') {
+    //     return new Status(Status.OK);
+    // }
+
+    // return new Status(Status.ERROR, 'JOB_FAILED', 'Job ended with state: ' + finalState);
 }
 
 module.exports = { execute: execute };

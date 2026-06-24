@@ -11,7 +11,7 @@ This cartridge exports product catalog data from Salesforce B2C Commerce to Sale
 3. Uploads in character-size-aware batches to stay within B2C Commerce's 1MB JS string quota
 4. Authenticates with Salesforce using OAuth 2.0 Client Credentials flow via a single registered B2C Service
 5. Exchanges the Salesforce Core token for a Data Cloud tenant token via `/services/a360/token`
-6. Pushes each CSV batch to Data Cloud via the Bulk Ingestion API, then polls until `JobComplete`
+6. Pushes each CSV batch to Data Cloud via the Bulk Ingestion API, then closes the job — Data Cloud processes asynchronously
 
 ---
 
@@ -242,7 +242,7 @@ B2C Job
              POST {dc_instance_url}/api/v1/ingest/jobs
              PUT  .../jobs/{id}/batches  (CSV, one PUT per batch)
              PATCH .../jobs/{id}         (close job → UploadComplete)
-             GET  .../jobs/{id}          (poll until JobComplete)
+             PATCH .../jobs/{id}          (close job → UploadComplete → DC processes async)
 ```
 
 ---
