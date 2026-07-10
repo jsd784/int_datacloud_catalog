@@ -1,0 +1,80 @@
+openapi: 3.0.3
+info:
+  title: CrocsB2C_ProductCatalog
+  description: >
+    Ingestion API schema for Crocs B2C Commerce product catalog data.
+    Single stream: one record per Variation Base Product (Master Product).
+  version: v1
+
+paths:
+  /Product:
+    post:
+      summary: Ingest product catalog records from B2C Commerce
+      tags:
+        - Product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Product'
+      responses:
+        "400":
+          description: Bad request
+        "404":
+          description: Not found
+        "500":
+          description: Internal server error
+
+components:
+  schemas:
+
+    Product:
+      type: object
+      required:
+        - product_id
+      properties:
+        product_id:
+          type: string
+          x-sf-dc-primary-key: true
+          description: Unique product identifier from B2C Commerce
+        product_name:
+          type: string
+          description: Localized product display name
+        short_description:
+          type: string
+          description: Short marketing description of the product
+        long_description:
+          type: string
+          description: Full product description including features and details
+        online_flag:
+          type: boolean
+          description: Whether the product is currently online and visible to shoppers
+        product_type:
+          type: string
+          description: B2C Commerce product type e.g. Variation Base Product
+        online_from:
+          type: string
+          format: date-time
+          description: Date from which the product is online (ISO 8601)
+        online_to:
+          type: string
+          format: date-time
+          description: Date until which the product is online (ISO 8601)
+        last_modified:
+          type: string
+          format: date-time
+          description: Date the product record was last modified (ISO 8601)
+        creation_date:
+          type: string
+          format: date-time
+          description: Date the product record was created (ISO 8601)
+        brand:
+          type: string
+          description: Product brand name
+        manufacturer_name:
+          type: string
+          description: Manufacturer name
+        in_stock:
+          type: boolean
+          description: Whether the product is currently in stock
