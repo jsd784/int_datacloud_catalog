@@ -1,15 +1,16 @@
 'use strict';
 
-var ProductMgr = require('dw/catalog/ProductMgr');
-var Logger     = require('dw/system/Logger');
-var Site       = require('dw/system/Site');
-var Status     = require('dw/system/Status');
+var ProductMgr   = require('dw/catalog/ProductMgr');
+var PriceBookMgr = require('dw/catalog/PriceBookMgr');
+var Logger       = require('dw/system/Logger');
+var Site         = require('dw/system/Site');
+var Status       = require('dw/system/Status');
 var authService      = require('int_datacloud_catalog/cartridge/scripts/datacloud/authService');
 var ingestionService = require('int_datacloud_catalog/cartridge/scripts/datacloud/ingestionService');
 
 var log = Logger.getLogger('int_datacloud_catalog', 'exportProductsToDataCloud');
 
-var CSV_HEADER = 'product_id,product_name,short_description,long_description,online_flag,product_type,online_from,online_to,last_modified,creation_date,brand,manufacturer_name,in_stock';
+var CSV_HEADER = 'product_id,product_name,short_description,long_description,online_flag,product_type,online_from,online_to,last_modified,creation_date,brand,manufacturer_name,in_stock,gender,lifestyle,jibbitable,hide_from_search,category_ids,flat_categories,snipes_label,snipes_color,pricing_price,pricing_regular_price_low,pricing_on_sale,pricing_discount_percentage,refinement_color,refinement_sizes,refinement_jibbitz,size_variation_ids,size_variation_names';
 
 /**
  * Escapes a value for CSV: wraps in double quotes and escapes internal quotes.
@@ -30,6 +31,137 @@ function csvEscape(value) {
 function formatDate(d) {
     if (!d) return '';
     try { return new Date(d.getTime()).toISOString(); } catch (e) { return ''; }
+}
+
+/**
+ * Returns pipe-delimited online category IDs for a product (includes master's categories for variants).
+ */
+function getCategoryIDs(product) {
+    var cats = product.getOnlineCategories();
+    if (!cats || cats.length === 0) {
+        if (product.isVariant()) {
+            cats = product.masterProduct.getOnlineCategories();
+        }
+    }
+    if (!cats || cats.length === 0) return '';
+    var ids = [];
+    var it = cats.iterator();
+    while (it.hasNext()) {
+        ids.push(it.next().getID());
+    }
+    return ids.join('|');
+}
+
+/**
+ * Builds a pipe-delimited flat category path string for one category by walking up the tree.
+ * e.g. "root > mens > mens-shoes"
+ */
+function buildCategoryPath(category) {
+    var parts = [];
+    var current = category;
+    while (current && !current.isTopLevel() && !current.isRoot()) {
+        parts.unshift(current.getID());
+        current = current.getParent();
+    }
+    return parts.join(' > ');
+}
+
+/**
+ * Returns pipe-delimited flat category paths for all online categories of a product.
+ */
+function getFlatCategories(product) {
+    var cats = product.getOnlineCategories();
+    if (!cats || cats.length === 0) {
+        if (product.isVariant()) {
+            cats = product.masterProduct.getOnlineCategories();
+        }
+    }
+    if (!cats || cats.length === 0) return '';
+    var paths = [];
+    var it = cats.iterator();
+    while (it.hasNext()) {
+        var path = buildCategoryPath(it.next());
+        if (path) paths.push(path);
+    }
+    return paths.join('|');
+}
+
+/**
+ * Returns pricing fields: price, regularPriceLow, onSale, discountPercentage.
+ * Uses site-specific retail and sale price books following the Crocs Pricing.js pattern.
+ */
+function getPricing(product) {
+    try {
+        var currentSite    = Site.getCurrent();
+        var siteCode       = currentSite.getID().split('_')[1];
+        var retailPBPrefix = currentSite.getCustomPreferenceValue('retailPriceBookPrefix') || '';
+        var salePBPrefix   = currentSite.getCustomPreferenceValue('salePriceBookPrefix') || '';
+        var pbSuffix       = currentSite.getCustomPreferenceValue('PriceBookSuffix') || '';
+        var retailPBID     = retailPBPrefix + (siteCode ? siteCode.toUpperCase() : '') + pbSuffix;
+        var salePBID       = salePBPrefix   + (siteCode ? siteCode.toUpperCase() : '') + pbSuffix;
+
+        // For masters, find lowest price across orderable variants
+        var target = product;
+        if (product.isMaster()) {
+            var variants = product.getVariants();
+            for (var i = 0; i < variants.length; i++) {
+                if (variants[i].priceModel.price && variants[i].priceModel.price.value > 0) {
+                    target = variants[i];
+                    break;
+                }
+            }
+        }
+
+        var priceModel   = target.getPriceModel();
+        var retailPB     = PriceBookMgr.getPriceBook(retailPBID);
+        var regularPrice = retailPB ? priceModel.getPriceBookPrice(retailPBID) : priceModel.getPrice();
+        var salePrice    = priceModel.getPriceBookPrice(salePBID);
+
+        var price              = null;
+        var regularPriceLow    = null;
+        var onSale             = false;
+        var discountPercentage = null;
+
+        if (regularPrice && regularPrice.available && regularPrice.value > 0) {
+            regularPriceLow = regularPrice.value;
+            if (salePrice && salePrice.available && salePrice.value > 0 && salePrice.value < regularPrice.value) {
+                price              = salePrice.value;
+                onSale             = true;
+                discountPercentage = Math.round((1 - salePrice.value / regularPrice.value) * 100);
+            } else {
+                price = regularPrice.value;
+            }
+        }
+
+        return {
+            price:              price,
+            regularPriceLow:    regularPriceLow,
+            onSale:             onSale,
+            discountPercentage: discountPercentage
+        };
+    } catch (e) {
+        return { price: null, regularPriceLow: null, onSale: false, discountPercentage: null };
+    }
+}
+
+/**
+ * Returns pipe-delimited size variation IDs and names for a master product.
+ */
+function getSizeVariations(product) {
+    var ids   = [];
+    var names = [];
+    try {
+        var vm        = product.getVariationModel();
+        var sizeAttr  = vm.getProductVariationAttribute('size');
+        if (!sizeAttr) return { ids: '', names: '' };
+        var sizeValues = vm.getAllValues(sizeAttr);
+        for (var i = 0; i < sizeValues.length; i++) {
+            var sv = sizeValues[i];
+            ids.push(sv.getValue());
+            names.push(sv.getDisplayValue());
+        }
+    } catch (e) { /* no variation model — simple product */ }
+    return { ids: ids.join('|'), names: names.join('|') };
 }
 
 // Flush batch at 800KB — leaves 200KB headroom under B2C's 1MB JS string quota.
@@ -68,6 +200,65 @@ function uploadProductsInBatches(uploadFn) {
                 inStock = false;
             }
 
+            // Algolia-parity fields
+            var gender = ('gender' in product.custom && !empty(product.custom.gender) && product.custom.gender.value !== '-None-') ? product.custom.gender.value : '';
+
+            // lifestyle is a localizable Enum of Strings — may return an array
+            var lifestyle = '';
+            if ('lifestyle' in product.custom && !empty(product.custom.lifestyle)) {
+                var ls = product.custom.lifestyle;
+                if (Array.isArray(ls) || (ls.length !== undefined && typeof ls !== 'string')) {
+                    var lsParts = [];
+                    for (var li = 0; li < ls.length; li++) { lsParts.push(ls[li].displayValue || String(ls[li])); }
+                    lifestyle = lsParts.join('|');
+                } else {
+                    lifestyle = ls.displayValue || String(ls);
+                }
+            }
+
+            var jibbitable     = ('jibbitable' in product.custom && product.custom.jibbitable) ? 'true' : 'false';
+            var hideFromSearch = product.isSearchable() ? 'false' : 'true';
+            var categoryIDs    = getCategoryIDs(product);
+            var flatCategories = getFlatCategories(product);
+
+            var snipesLabel = ('snipeValue' in product.custom && !empty(product.custom.snipeValue) && !empty(product.custom.snipeValue.displayValue)) ? product.custom.snipeValue.displayValue : '';
+            var snipesColor = '';
+            if ('snipeValue' in product.custom && !empty(product.custom.snipeValue) && !empty(product.custom.snipeValue.value)) {
+                var snipeParts = product.custom.snipeValue.value.split('|');
+                snipesColor = snipeParts.length > 1 ? snipeParts[1] : '';
+            }
+
+            var pricing = getPricing(product);
+
+            // refinementColor is an Enum — may return an array
+            var refinementColor = '';
+            if ('refinementColor' in product.custom && !empty(product.custom.refinementColor)) {
+                var rc = product.custom.refinementColor;
+                if (Array.isArray(rc) || (rc.length !== undefined && typeof rc !== 'string')) {
+                    var rcParts = [];
+                    for (var ri = 0; ri < rc.length; ri++) { rcParts.push(rc[ri].displayValue || String(rc[ri])); }
+                    refinementColor = rcParts.join('|');
+                } else {
+                    refinementColor = rc.displayValue || String(rc);
+                }
+            }
+
+            var refinementSizes = ('refinementSize' in product.custom && !empty(product.custom.refinementSize)) ? String(product.custom.refinementSize) : '';
+
+            // refinementJibbitz is an Enum — may return an array
+            var refinementJibbitz = '';
+            if ('refinementJibbitz' in product.custom && !empty(product.custom.refinementJibbitz)) {
+                var rj = product.custom.refinementJibbitz;
+                if (Array.isArray(rj) || (rj.length !== undefined && typeof rj !== 'string')) {
+                    var rjParts = [];
+                    for (var rji = 0; rji < rj.length; rji++) { rjParts.push(rj[rji].displayValue || String(rj[rji])); }
+                    refinementJibbitz = rjParts.join('|');
+                } else {
+                    refinementJibbitz = rj.displayValue || String(rj);
+                }
+            }
+            var sizeVars = getSizeVariations(product);
+
             var row = [
                 csvEscape(productId),
                 csvEscape(product.getName()),
@@ -81,7 +272,24 @@ function uploadProductsInBatches(uploadFn) {
                 csvEscape(formatDate(product.getCreationDate())),
                 csvEscape(product.getBrand()),
                 csvEscape(product.getManufacturerName()),
-                csvEscape(inStock)
+                csvEscape(inStock),
+                csvEscape(gender),
+                csvEscape(lifestyle),
+                csvEscape(jibbitable),
+                csvEscape(hideFromSearch),
+                csvEscape(categoryIDs),
+                csvEscape(flatCategories),
+                csvEscape(snipesLabel),
+                csvEscape(snipesColor),
+                csvEscape(pricing.price),
+                csvEscape(pricing.regularPriceLow),
+                csvEscape(pricing.onSale),
+                csvEscape(pricing.discountPercentage),
+                csvEscape(refinementColor),
+                csvEscape(refinementSizes),
+                csvEscape(refinementJibbitz),
+                csvEscape(sizeVars.ids),
+                csvEscape(sizeVars.names)
             ].join(',');
 
             batchRows.push(row);
