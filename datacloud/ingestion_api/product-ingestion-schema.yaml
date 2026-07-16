@@ -78,3 +78,54 @@ components:
         in_stock:
           type: boolean
           description: Whether the product is currently in stock
+        gender:
+          type: string
+          description: Product gender attribute (e.g. mens, womens, kids)
+        lifestyle:
+          type: string
+          description: Product lifestyle/style attribute
+        jibbitable:
+          type: boolean
+          description: Whether Jibbitz charms can be attached to this product
+        hide_from_search:
+          type: boolean
+          description: Whether the product is excluded from search (derived from product.searchable)
+        category_ids:
+          type: string
+          description: Pipe-delimited list of online category IDs the product belongs to
+        flat_categories:
+          type: string
+          description: Pipe-delimited list of category hierarchy paths (e.g. mens > mens-shoes)
+        snipes_label:
+          type: string
+          description: Snipe display label (e.g. New Color, Sale)
+        snipes_color:
+          type: string
+          description: Snipe background color hex code
+        pricing_price:
+          type: number
+          description: Current selling price (sale price if on sale, otherwise regular price)
+        pricing_regular_price_low:
+          type: number
+          description: Lowest regular (retail) price from the site retail price book
+        pricing_on_sale:
+          type: boolean
+          description: Whether the product is currently on sale
+        pricing_discount_percentage:
+          type: integer
+          description: Discount percentage off regular price when on sale
+        refinement_color:
+          type: string
+          description: Refinement color attribute display value for search filtering
+        refinement_sizes:
+          type: string
+          description: Refinement size attribute value for search filtering
+        refinement_jibbitz:
+          type: string
+          description: Jibbitz refinement category display value
+        size_variation_ids:
+          type: string
+          description: Pipe-delimited list of size variation attribute IDs
+        size_variation_names:
+          type: string
+          description: Pipe-delimited list of size variation display names
