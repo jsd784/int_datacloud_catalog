@@ -201,22 +201,62 @@ function uploadProductsInBatches(uploadFn) {
             }
 
             // Algolia-parity fields
-            var gender    = ('gender' in product.custom && !empty(product.custom.gender) && product.custom.gender.value !== '-None-') ? product.custom.gender.value : '';
-            var lifestyle = ('lifestyle' in product.custom && !empty(product.custom.lifestyle)) ? product.custom.lifestyle.displayValue || String(product.custom.lifestyle) : '';
-            var jibbitable   = ('jibbitable' in product.custom && product.custom.jibbitable) ? 'true' : 'false';
+            var gender = ('gender' in product.custom && !empty(product.custom.gender) && product.custom.gender.value !== '-None-') ? product.custom.gender.value : '';
+
+            // lifestyle is a localizable Enum of Strings — may return an array
+            var lifestyle = '';
+            if ('lifestyle' in product.custom && !empty(product.custom.lifestyle)) {
+                var ls = product.custom.lifestyle;
+                if (Array.isArray(ls) || (ls.length !== undefined && typeof ls !== 'string')) {
+                    var lsParts = [];
+                    for (var li = 0; li < ls.length; li++) { lsParts.push(ls[li].displayValue || String(ls[li])); }
+                    lifestyle = lsParts.join('|');
+                } else {
+                    lifestyle = ls.displayValue || String(ls);
+                }
+            }
+
+            var jibbitable     = ('jibbitable' in product.custom && product.custom.jibbitable) ? 'true' : 'false';
             var hideFromSearch = product.isSearchable() ? 'false' : 'true';
             var categoryIDs    = getCategoryIDs(product);
             var flatCategories = getFlatCategories(product);
+
             var snipesLabel = ('snipeValue' in product.custom && !empty(product.custom.snipeValue) && !empty(product.custom.snipeValue.displayValue)) ? product.custom.snipeValue.displayValue : '';
             var snipesColor = '';
             if ('snipeValue' in product.custom && !empty(product.custom.snipeValue) && !empty(product.custom.snipeValue.value)) {
                 var snipeParts = product.custom.snipeValue.value.split('|');
                 snipesColor = snipeParts.length > 1 ? snipeParts[1] : '';
             }
-            var pricing        = getPricing(product);
-            var refinementColor  = ('refinementColor' in product.custom && !empty(product.custom.refinementColor)) ? product.custom.refinementColor.displayValue || String(product.custom.refinementColor) : '';
-            var refinementSizes  = ('refinementSize' in product.custom && !empty(product.custom.refinementSize)) ? String(product.custom.refinementSize) : '';
-            var refinementJibbitz = ('refinementJibbitz' in product.custom && !empty(product.custom.refinementJibbitz)) ? product.custom.refinementJibbitz.displayValue || String(product.custom.refinementJibbitz) : '';
+
+            var pricing = getPricing(product);
+
+            // refinementColor is an Enum — may return an array
+            var refinementColor = '';
+            if ('refinementColor' in product.custom && !empty(product.custom.refinementColor)) {
+                var rc = product.custom.refinementColor;
+                if (Array.isArray(rc) || (rc.length !== undefined && typeof rc !== 'string')) {
+                    var rcParts = [];
+                    for (var ri = 0; ri < rc.length; ri++) { rcParts.push(rc[ri].displayValue || String(rc[ri])); }
+                    refinementColor = rcParts.join('|');
+                } else {
+                    refinementColor = rc.displayValue || String(rc);
+                }
+            }
+
+            var refinementSizes = ('refinementSize' in product.custom && !empty(product.custom.refinementSize)) ? String(product.custom.refinementSize) : '';
+
+            // refinementJibbitz is an Enum — may return an array
+            var refinementJibbitz = '';
+            if ('refinementJibbitz' in product.custom && !empty(product.custom.refinementJibbitz)) {
+                var rj = product.custom.refinementJibbitz;
+                if (Array.isArray(rj) || (rj.length !== undefined && typeof rj !== 'string')) {
+                    var rjParts = [];
+                    for (var rji = 0; rji < rj.length; rji++) { rjParts.push(rj[rji].displayValue || String(rj[rji])); }
+                    refinementJibbitz = rjParts.join('|');
+                } else {
+                    refinementJibbitz = rj.displayValue || String(rj);
+                }
+            }
             var sizeVars = getSizeVariations(product);
 
             var row = [
